@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.pyright/
+
+# 取得物・生成物（コードrepoには含めない）
+# setup.bat で取得する .task モデル
+models/
+data/
+# 録画した特徴量CSVなど
+runs/
+# キャリブレーション結果（個人データ）
+profiles/
+
+# 一時ファイル
+scratch/
+*.tmp
+
+# OS / エディタ
+.DS_Store
+.vscode/
+.idea/
+
+# クラッシュダンプ
+*.stackdump
+
+# 生成されるレポート
+report*.txt

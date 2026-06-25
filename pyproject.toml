@@ -1,0 +1,41 @@
+[project]
+name = "alertness-recognition"
+version = "0.1.0"
+description = "カメラ映像から覚醒度・注意状態を推定するデモ（ルールベース）"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "mediapipe>=0.10.14",
+    "opencv-python>=4.9",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6", "pyright>=1.1"]
+ml = ["scikit-learn>=1.4"]   # 機械学習用。今は使わない
+
+[project.scripts]
+alertness = "alertness.app:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.10"
+typeCheckingMode = "standard"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

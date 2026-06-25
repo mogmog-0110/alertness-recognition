@@ -1,0 +1,74 @@
+# 既定設定。しきい値・窓幅・カメラ設定はここで一元管理し、コードには直書きしない。
+# 用途を変える場合も、基本はこのファイルだけを編集すれば済むようにしている。
+
+camera:
+  index: 0
+  width: 1280
+  height: 720
+  target_fps: 30
+
+source:
+  type: webcam          # webcam / video
+  # path: sample.mp4    # type=video のとき使う
+
+detector:
+  type: mediapipe       # MediaPipe FaceLandmarker (Tasks API)
+  model_path: models/face_landmarker.task
+  max_faces: 1
+  output_blendshapes: true   # jawOpen=あくび, eyeBlink=瞬き の判定に使う
+
+# キャリブレーション。EAR や頭部姿勢の基準は人・カメラ位置で大きく変わるため、
+# 起動時に「その人の基準値」を取得して以降の判定を相対化する。
+calibration:
+  enabled: true
+  mode: guided          # guided=案内付き / implicit=最初の数秒を基準とみなす
+  duration_seconds: 3.0
+  save_path: profiles/default.json   # 空文字なら保存しない
+
+# 生特徴量の正規化。学習(Colab)と推論(ローカル)で必ず同じ変換を使うため、
+# バージョンを付けて取り違えを防ぐ。
+normalize:
+  version: 1
+
+# 何を判定するか（評価軸）。軸を増やせば判定対象がそのまま増える。
+# 各軸は連続スコア(0..1)を持ち、levels でレベルに区切る。
+assessment:
+  dimensions:
+    - name: drowsiness        # 眠気
+      levels: { low: 0.3, medium: 0.6, high: 0.8 }
+      cues: [eye_closure, blink, yawn, head_down]
+    - name: distraction       # 注意逸脱
+      levels: { low: 0.3, medium: 0.6, high: 0.8 }
+      cues: [head_turn, gaze_off]
+
+# 特徴ごとの判定器（cue）。重みと個別パラメータを持つ。
+# パラメータ名は各 cue クラスの引数と一致させること。
+cues:
+  # 値は実データの分布に合わせて調整（closed_ratio は awake/drowsy の中間、
+  # gaze は実測が 0.0〜0.06 程度だったので 0.05、頭部閾値も実測に寄せた）。
+  eye_closure: { weight: 1.0, window_seconds: 30, perclos_drowsy: 0.4, closed_ratio: 0.6, max_yaw: 25 }
+  blink:       { weight: 0.7, closed_ratio: 0.6, long_blink_seconds: 1.0, max_yaw: 25 }
+  yawn:        { weight: 0.5, open_threshold: 0.4, min_seconds: 1.5 }
+  head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5 }
+  head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5 }
+  gaze_off:    { weight: 0.6, off_threshold: 0.035, off_screen_seconds: 2.0 }
+
+# cue の結果を統合して最終判定を出す方針
+policy:
+  type: rule_based
+  hysteresis_frames: 8        # 状態のちらつき防止
+
+feedback:
+  window: true                # OpenCV ウィンドウに表示
+  draw_landmarks: true
+  debug: true                 # 画面右下に全特徴量を数値表示。しきい値調整時に使う
+  alert_cooldown_seconds: 5.0
+  audio: true                 # やわらかいチャイムで警告（Windows）
+  sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted）
+    drowsiness: drowsy
+    distraction: distracted
+
+# 学習データの録画。--record で有効化すると各フレームの特徴量＋判定をCSVに残す。
+recorder:
+  enabled: false
+  path: runs
