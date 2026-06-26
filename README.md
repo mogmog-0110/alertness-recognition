@@ -45,6 +45,18 @@ scripts\run.bat --record                   :: 判定の裏で特徴量CSVを run
 
 しきい値やキャリブの有無などの設定は `config\default.yaml`。`--config` で別ファイルも渡せる。
 
+## 画面を録画する
+
+デモの様子を動画で残したいときは `record.bat`。画面を録画しながらデモを起動し、
+終了すると `recordings\` に mp4 が残る。前述の `--record`（特徴量CSV）とは別で、こちらは映像そのもの。
+ffmpeg が要る（無ければ `winget install Gyan.FFmpeg`）。
+
+```bat
+scripts\record.bat                            :: 画面を録画しながらデモ起動
+scripts\record.bat --video clip.mp4           :: 引数はそのままデモへ渡る
+scripts\record.bat --region title=Alertness   :: デモ窓だけ録る
+```
+
 ## データ収集と採点
 
 ルールの閾値はラベル付きデータで詰める。録る → 採点する、の2ステップ。
