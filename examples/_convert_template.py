@@ -8,6 +8,7 @@
 正準ラベルは2軸（drowsiness / distraction）。片方しか情報が無いデータセットは、その軸だけ
 写せばよい（もう片方は none 既定）。数値/順序尺度は ordinal_bin、クラス名は lookup で写す
 （クラス名の写し方は convert_activity_example.py を参照）。
+各段階(none/low/medium/high)の意味は docs/annotation-guide.md（アノテ規約）に従う。
 """
 
 from alertness.ingest.mapping import ordinal_bin, segment, write_manifest
