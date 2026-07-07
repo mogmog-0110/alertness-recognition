@@ -45,6 +45,7 @@ class CsvRecorderSink:
         labels: LabelState | None = None,
         subject: str = "",
         cue_names: Sequence[str] = (),
+        context: str = "",
     ) -> None:
         directory = Path(path_dir)
         directory.mkdir(parents=True, exist_ok=True)
@@ -52,6 +53,7 @@ class CsvRecorderSink:
         self._file = self._path.open("w", newline="", encoding="utf-8")
         self._labels = labels or LabelState()  # 実行時に書き換わる正解ラベル
         self._subject = subject  # 被験者ID（被験者独立の評価に使う）
+        self._context = context  # 用途タグ（driving/study 等。学習で絞る/プールに使う）
         self._session_id = self._path.stem
 
         # session_id / subject を残すと、後で「人ごとに分けた評価」ができる。
@@ -62,7 +64,11 @@ class CsvRecorderSink:
         # cue ごとのスコアも残す。どの手がかりが効いた/誤発火したかを後で調べられる。
         for name in cue_names:
             fields.append(f"cue_{name}")
+        # label は旧・単一ラベル（ライブ収録の互換）。正準は軸別の段階ラベル。
         fields.append("label")
+        fields.append("label_drowsiness")
+        fields.append("label_distraction")
+        fields.append("context")
         # 余分なキーは無視し、欠けた列は空にする（列構成を固定するため）。
         self._writer = csv.DictWriter(
             self._file, fieldnames=fields, extrasaction="ignore", restval=""
@@ -81,6 +87,10 @@ class CsvRecorderSink:
         row["session_id"] = self._session_id
         row["subject"] = self._subject
         row["label"] = self._labels.value
+        # 軸別ラベルは、対応する provider だけが持つ（無ければ空）。
+        row["label_drowsiness"] = getattr(self._labels, "drowsiness", "")
+        row["label_distraction"] = getattr(self._labels, "distraction", "")
+        row["context"] = self._context
         self._writer.writerow(row)
 
     def close(self) -> None:
