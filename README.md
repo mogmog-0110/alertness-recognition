@@ -84,3 +84,56 @@ scripts\report.bat --out report.txt  :: 結果をファイルに保存（UTF-8�
 ```
 
 採点表には accuracy、macro-F1、誤警告率、見逃し率、クラス別の成績、混同行列が出る。
+
+## 外部データセットを取り込む
+
+自前収録（前節）のほかに、顔動画の公開データセットからも学習用CSVを作れる。アノテは
+区間（または動画1本）単位の粗いラベルでよい。
+
+まず、データセット固有の変換器で「動画＋区間ラベル」を manifest(JSON) にする。
+`examples\_convert_template.py` をコピーして写像を書く（数値尺度は `ordinal_bin`、クラス名は
+`lookup`。運転行動アノテの例は `examples\convert_activity_example.py`）。次に manifest から
+特徴量CSVを作る（`.venv` を有効にして実行）。
+
+```bat
+python -m alertness.ingest --manifests data\manifests   :: フォルダ内の *.json をまとめて取り込む
+python -m alertness.ingest --manifests clip.json         :: 単体のJSONでも可
+```
+
+CSVは `runs\ingested\` に出る（`--out` で変更可）。列は自前収録と同じなので、以降の採点や学習は
+まったく同じに扱える。正準ラベルは2軸（drowsiness / distraction）× 4段階（none/low/medium/high）。
+どのラベルをどの段階に写すか＝アノテ規約は `docs\annotation-guide.md` に集約する（自前収録の
+ラベリングもこの規約に従う）。
+
+## 学習モデル（ML）で判定する
+
+既定はルールベース判定だが、学習済みモデルに差し替えられる。モデル（`model.pkl`）の学習は
+別リポジトリ **[alertness-colab](https://github.com/mogmog-0110/alertness-colab)** が担当する。
+役割分担は：
+
+- このリポジトリ … カメラ/動画 → 特徴量、ルール判定、特徴量CSVの書き出し、ML判定
+- alertness-colab … 特徴量CSV → `model.pkl`（Colab でノートを実行するだけ）
+
+手順：
+
+1. 特徴量CSV（自前収録 or 取り込み）を alertness-colab に渡して `model.pkl` を作る。
+2. できた `model.pkl` を `models\` に置く。
+3. ML用の依存を入れる。
+
+   ```bat
+   .venv\Scripts\activate
+   pip install -e ".[ml]"
+   ```
+
+4. `config\default.yaml` の policy を切り替える。
+
+   ```yaml
+   policy:
+     type: ml
+     model_path: models/model.pkl
+   ```
+
+あとは `run.bat` などいつもどおり動かせば、ルールの代わりに `model.pkl` で判定する。用途別
+モデル（自習用・運転用など）は `model_path` を `models/model_study.pkl` のように向けるだけで
+切り替わる。眠気は用途に依存しないので全データ、注意逸脱だけが用途別に学習される（詳細は
+alertness-colab 側）。
