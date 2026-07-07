@@ -79,6 +79,16 @@ def _dimension_specs(config: dict[str, Any]) -> list[DimensionSpec]:
 
 
 def build_classifier(config: dict[str, Any]) -> Classifier:
+    policy_cfg = config.get("policy", {})
+    ptype = policy_cfg.get("type", "rule_based")
+    if ptype == "ml":
+        # 学習済み model.pkl を読む判定器。cue は使わないので組み立てない。
+        from .classifier.ml_based import MLClassifier, load_bundle
+
+        return MLClassifier(load_bundle(policy_cfg.get("model_path", "models/model.pkl")))
+    if ptype != "rule_based":
+        raise ValueError(f"未知の policy type: {ptype}")
+
     cue_cfg = config.get("cues", {})
     used: set[str] = set()
     for dim in config.get("assessment", {}).get("dimensions", []):
@@ -93,10 +103,6 @@ def build_classifier(config: dict[str, Any]) -> Classifier:
         weights[name] = float(params.pop("weight", 1.0))
         cues.append(_CUE_REGISTRY[name](**params))
 
-    policy_cfg = config.get("policy", {})
-    ptype = policy_cfg.get("type", "rule_based")
-    if ptype != "rule_based":
-        raise ValueError(f"未知の policy type: {ptype}")
     policy = RuleBasedPolicy(
         _dimension_specs(config), weights, policy_cfg.get("hysteresis_frames", 8)
     )

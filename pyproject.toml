@@ -13,7 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "pyright>=1.1"]
-ml = ["scikit-learn>=1.4"]   # 機械学習用。今は使わない
+ml = ["scikit-learn>=1.4", "joblib>=1.3"]   # policy.type=ml で学習済みモデルを読むとき必要
 
 [project.scripts]
 alertness = "alertness.app:main"
