@@ -20,6 +20,10 @@ recordings/
 # キャリブレーション結果（個人データ）
 profiles/
 
+# 学習済みモデル（生成物・個人データを含みうる）
+*.pkl
+*.joblib
+
 # 一時ファイル
 scratch/
 *.tmp

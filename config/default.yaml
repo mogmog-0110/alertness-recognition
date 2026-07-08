@@ -55,8 +55,10 @@ cues:
 
 # cue の結果を統合して最終判定を出す方針
 policy:
-  type: rule_based
-  hysteresis_frames: 8        # 状態のちらつき防止
+  type: rule_based            # ml にすると学習済みモデルで判定（要 pip install .[ml]）
+  hysteresis_frames: 8        # 状態のちらつき防止（rule_based のみ）
+  # type: ml                  # alertness-colab が作った model.pkl を読む判定に切替
+  # model_path: models/model.pkl
 
 feedback:
   window: true                # OpenCV ウィンドウに表示
