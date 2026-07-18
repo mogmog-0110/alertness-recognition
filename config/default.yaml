@@ -86,6 +86,7 @@ feedback:
   draw_landmarks: true
   face_mesh: false            # true にすると顔全体のメッシュ（網目）を描く
   stress_meter: true          # 右上にストレスの安静基準キャリブの進行度バーを表示
+  rppg_view: true             # 左下に額の切り出し＋脈波（微小な色変化）を可視化（開発用）
   debug: true                 # 画面右下に全特徴量を数値表示。しきい値調整時に使う
   alert_cooldown_seconds: 5.0
   audio: true                 # やわらかいチャイムで警告（Windows）

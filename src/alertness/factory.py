@@ -179,6 +179,8 @@ def build_sinks(
                 labels if recording else None,
                 feedback.get("face_mesh", False),
                 feedback.get("stress_meter", False),
+                feedback.get("rppg_view", False),
+                config.get("camera", {}).get("target_fps", 30),
             )
         )
     if recording:
