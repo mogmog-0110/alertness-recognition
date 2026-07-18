@@ -10,11 +10,13 @@ from __future__ import annotations
 from typing import Any
 
 from .classifier.classifier import CueClassifier
+from .classifier.cues.attention_hold import AttentionHoldCue
 from .classifier.cues.blink import BlinkCue
 from .classifier.cues.eye_closure import EyeClosureCue
 from .classifier.cues.gaze_off import GazeOffCue
 from .classifier.cues.head_down import HeadDownCue
 from .classifier.cues.head_turn import HeadTurnCue
+from .classifier.cues.hr_elevation import HrElevationCue
 from .classifier.cues.yawn import YawnCue
 from .classifier.policies.rule_based import RuleBasedPolicy
 from .classifier.states import DimensionSpec
@@ -32,6 +34,8 @@ _CUE_REGISTRY = {
     "head_down": HeadDownCue,
     "head_turn": HeadTurnCue,
     "gaze_off": GazeOffCue,
+    "attention_hold": AttentionHoldCue,
+    "hr_elevation": HrElevationCue,
 }
 
 

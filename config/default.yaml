@@ -40,12 +40,12 @@ assessment:
     - name: distraction       # 注意逸脱
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [head_turn, gaze_off]
-    - name: concentration     # 集中（用途依存。engagement 系データで学習する想定）
+    - name: concentration     # 集中（視線・頭部の注視保持で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: []                # 当面 ML 経路専用。cue が無い軸は rule 経路では常に none
-    - name: stress            # ストレス・苛立ち（映像単独では判定困難。ML 経路専用）
+      cues: [attention_hold]
+    - name: stress            # ストレス・苛立ち（rPPG の心拍上昇で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: []
+      cues: [hr_elevation]    # hr_elevation は rppg.enabled=true のときだけ効く
 
 # 特徴ごとの判定器（cue）。重みと個別パラメータを持つ。
 # パラメータ名は各 cue クラスの引数と一致させること。
@@ -58,6 +58,10 @@ cues:
   head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5 }
   head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5 }
   gaze_off:    { weight: 0.6, off_threshold: 0.035, off_screen_seconds: 2.0 }
+  # 集中: 視線が載り頭部が安定した状態が sustained_seconds 続けば満点。
+  attention_hold: { weight: 1.0, gaze_on_threshold: 0.035, steady_yaw_deg: 12, sustained_seconds: 3.0 }
+  # ストレス: rPPG の心拍が baseline から span 上がると満点。baseline は暫定・要キャリブ。
+  hr_elevation:   { weight: 1.0, baseline_bpm: 70, span_bpm: 30, min_quality: 0.15, sustained_seconds: 5.0 }
 
 # カメラからの心拍推定（rPPG）。stress の特徴源。重いので既定は無効。
 # 有効にすると各フレームに hr_bpm / rppg_quality が乗る（数秒ぶん貯まってから）。
