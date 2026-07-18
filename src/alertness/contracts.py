@@ -147,6 +147,7 @@ class CueResult:
     score: float  # 0..1 の重症度
     active: bool  # 自分の閾値を超えたか
     detail: str = ""  # 画面表示・根拠用の短い説明
+    progress: float | None = None  # 準備/キャリブの進行度(0..1)。持たない cue は None
 
 
 @dataclass(frozen=True)

@@ -7,8 +7,6 @@ debug=True のときは生の特徴量も出し、しきい値調整の手がか
 
 from __future__ import annotations
 
-import math
-
 import cv2
 import numpy as np
 
@@ -133,37 +131,24 @@ def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
         y += step
 
 
-def _bar(
-    img: np.ndarray, x: int, y: int, width: int, height: int, frac: float, color: tuple
-) -> None:
-    frac = max(0.0, min(1.0, frac))
-    cv2.rectangle(img, (x, y), (x + width, y + height), (60, 60, 60), -1)
-    cv2.rectangle(img, (x, y), (x + int(width * frac), y + height), color, -1)
-
-
 def _draw_stress_meter(img: np.ndarray, obs: Observation, assessment: Assessment) -> None:
-    # 右上に、ストレスの内部状態（現HR・推定した安静基準・信号品質・上振れ）をメーター表示。
-    stress = assessment.dimensions.get("stress")
-    if stress is None:
-        return
+    # 右上に、ストレスの安静基準キャリブの進行度を出す（起動時キャリブと同じ見た目のバー）。
+    cue = next((c for c in assessment.cues if c.name == "hr_elevation"), None)
+    if cue is None or cue.progress is None:
+        return  # ストレス cue が無い/較正不要（固定基準）のときは出さない。
+
+    progress = max(0.0, min(1.0, cue.progress))
+    done = progress >= 1.0
+    color = (0, 200, 0) if done else (0, 180, 220)
 
     w = img.shape[1]
     x, y, bw = w - 236, 60, 220
-    hr = obs.features.get("hr_bpm", float("nan"))
-    quality = obs.features.get("rppg_quality", 0.0)
-    if math.isnan(quality):
-        quality = 0.0
-    cue = next((c for c in assessment.cues if c.name == "hr_elevation"), None)
-    info = "rPPG off?" if math.isnan(hr) else (cue.detail if cue else f"HR {hr:.0f}")
-
-    _text(img, "STRESS (rPPG)", (x, y), 0.55, (255, 255, 255))
-    _text(img, info, (x, y + 20), 0.5, (200, 200, 200))
-
-    color = _COLORS[stress.level]
-    _bar(img, x, y + 30, bw, 12, stress.score, color)
-    _text(img, f"stress {stress.score:.2f}", (x, y + 56), 0.45, color)
-    _bar(img, x, y + 64, bw, 8, quality, (0, 200, 0))
-    _text(img, f"signal {quality:.2f}", (x, y + 84), 0.45, (0, 200, 0))
+    _text(img, "STRESS CALIB", (x, y), 0.55, (255, 255, 255))
+    bar_y = y + 12
+    cv2.rectangle(img, (x, bar_y), (x + int(bw * progress), bar_y + 14), color, -1)
+    cv2.rectangle(img, (x, bar_y), (x + bw, bar_y + 14), (220, 220, 220), 1)
+    label = "calibrated" if done else f"{progress * 100:.0f}%"
+    _text(img, label, (x, bar_y + 34), 0.5, color)
 
 
 def draw_guided(

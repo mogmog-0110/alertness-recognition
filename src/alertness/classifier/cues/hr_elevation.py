@@ -41,12 +41,13 @@ class HrElevationCue:
         self.baseline_percentile = baseline_percentile  # 基準に使う下側パーセンタイル
 
     def evaluate(self, obs: Observation) -> CueResult:
+        progress = self._progress(obs)
         if not obs.features.face_present:
-            return CueResult(self.name, self.dimension, 0.0, False, "顔なし")
+            return CueResult(self.name, self.dimension, 0.0, False, "顔なし", progress)
 
         recent = self._valid_hr(obs, self.sustained_seconds)
         if not recent:
-            return CueResult(self.name, self.dimension, 0.0, False, "心拍なし")
+            return CueResult(self.name, self.dimension, 0.0, False, "心拍なし", progress)
 
         current = float(np.median([h for _, h in recent]))
         baseline, ready = self._baseline(obs)
@@ -54,7 +55,7 @@ class HrElevationCue:
         active = score >= 0.5
         # 基準がまだ本人の履歴から確定していない間は (warm) を付ける。
         detail = f"HR {current:.0f} base {baseline:.0f}{'' if ready else ' (warm)'}"
-        return CueResult(self.name, self.dimension, score, active, detail)
+        return CueResult(self.name, self.dimension, score, active, detail, progress)
 
     def _valid_hr(self, obs: Observation, seconds: float) -> list[tuple[float, float]]:
         # 品質が足りる有効な (時刻, hr) だけを返す。
@@ -66,6 +67,17 @@ class HrElevationCue:
             for t, h, q in zip(times, hrs, quals, strict=False)
             if not math.isnan(h) and q >= self.min_quality
         ]
+
+    def _progress(self, obs: Observation) -> float | None:
+        # 安静基準を確立するキャリブの進行度(0..1)。固定基準なら較正不要で None。
+        if not self.adaptive_baseline:
+            return None
+        samples = self._valid_hr(obs, self.baseline_seconds)
+        if len(samples) < 2:
+            return 0.0
+        covered = samples[-1][0] - samples[0][0]
+        required = 0.6 * self.baseline_seconds  # _baseline の確定条件と揃える
+        return clamp(covered / required) if required > 0 else 1.0
 
     def _baseline(self, obs: Observation) -> tuple[float, bool]:
         # 返り値は (基準bpm, 確定か)。確定＝本人の履歴から推定できた状態。

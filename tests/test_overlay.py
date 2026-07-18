@@ -32,9 +32,9 @@ def _obs(values: dict) -> Observation:
     return Observation(frame=frame, landmarks=lm, features=feats, history=_H(), profile=None)  # type: ignore[arg-type]
 
 
-def _assessment() -> Assessment:
+def _assessment(progress: float | None = 0.5) -> Assessment:
     dims = {"stress": Dimension("stress", 0.6, Level.MEDIUM, ("hr_elevation",))}
-    cue = CueResult("hr_elevation", "stress", 0.6, True, "HR 82 base 68")
+    cue = CueResult("hr_elevation", "stress", 0.6, True, "HR 82 base 68", progress)
     return Assessment(dimensions=dims, timestamp=0.0, cues=(cue,))
 
 
@@ -43,18 +43,25 @@ def _top_right_pixels(img: np.ndarray) -> int:
     return int((region.sum(axis=2) > 0).sum())
 
 
-def test_stress_meter_draws_in_top_right():
+def test_stress_meter_draws_progress_in_top_right():
     obs = _obs({"hr_bpm": 82.0, "rppg_quality": 0.34})
-    a = _assessment()
+    a = _assessment(progress=0.5)
     with_meter = overlay.render(obs, a, stress_meter=True)
     without = overlay.render(obs, a, stress_meter=False)
     assert with_meter.shape == (480, 640, 3)
-    # メーターを出した方が右上に描画が増える。
+    # 進行度バーを出した方が右上に描画が増える。
     assert _top_right_pixels(with_meter) > _top_right_pixels(without)
 
 
-def test_stress_meter_shows_hint_when_rppg_off():
-    # hr_bpm が無い（rPPG無効）でもクラッシュせず、メーター枠は描かれる。
+def test_stress_meter_hidden_when_no_calibration():
+    # progress を持たない cue（較正不要/固定基準）ならバーは出さない。
     obs = _obs({})
-    img = overlay.render(obs, _assessment(), stress_meter=True)
+    a = _assessment(progress=None)
+    assert _top_right_pixels(overlay.render(obs, a, stress_meter=True)) == 0
+
+
+def test_stress_meter_full_when_calibrated():
+    obs = _obs({"hr_bpm": 70.0, "rppg_quality": 0.4})
+    a = _assessment(progress=1.0)
+    img = overlay.render(obs, a, stress_meter=True)
     assert _top_right_pixels(img) > 0
