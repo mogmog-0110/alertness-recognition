@@ -34,6 +34,8 @@ FEATURE_COLUMNS = (
     "jawOpen",
     "eyeBlinkLeft",
     "eyeBlinkRight",
+    "hr_bpm",  # rPPG 由来（無効時は空）。stress モデルの特徴になり得る。
+    "rppg_quality",
 )
 
 

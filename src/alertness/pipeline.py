@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from .contracts import Assessment, CalibrationProfile, Frame, Observation
 from .features.normalize import normalize_features
+from .features.rppg import RppgEstimator
 from .ports import Classifier, FeatureExtractor, LandmarkDetector
 from .temporal import TemporalContext
 
@@ -21,6 +22,7 @@ class Pipeline:
         temporal: TemporalContext,
         normalize_version: int = 1,
         profile: CalibrationProfile | None = None,
+        rppg: RppgEstimator | None = None,
     ) -> None:
         self._detector = detector
         self._extractor = extractor
@@ -28,6 +30,7 @@ class Pipeline:
         self._temporal = temporal
         self._version = normalize_version
         self._profile = profile or CalibrationProfile.identity()
+        self._rppg = rppg
 
     def set_profile(self, profile: CalibrationProfile) -> None:
         self._profile = profile
@@ -36,6 +39,9 @@ class Pipeline:
         landmarks = self._detector.detect(frame)
         raw = self._extractor.extract(landmarks, frame.timestamp)
         features = normalize_features(raw, self._profile, self._version)
+        if self._rppg is not None and features.face_present:
+            # 心拍は複数フレームから出るので、正規化後の袋へ足す（キャリブ不要の量）。
+            features = self._rppg.augment(frame, landmarks, features)
         self._temporal.append(features)
         return Observation(
             frame=frame,

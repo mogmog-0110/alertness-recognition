@@ -1,0 +1,142 @@
+"""カメラ映像から心拍を推定する rPPG（遠隔光電脈波）。stress 判定の特徴源。
+
+顔の額あたりの肌の平均色は、心拍に合わせて微妙に変化する。その時系列から脈波を取り出し
+（POS法, Wang et al. 2017）、周波数解析で心拍[bpm]を推定する。numpy だけで動く素朴な実装で、
+まず動くことを優先。より高精度が要るなら pos_signal / estimate_hr を pyVHR 等に差し替える。
+
+状態（過去フレームの肌色バッファ）を持つので、1フレーム独立の特徴抽出とは別の口にする。
+Pipeline から augment を呼び、既存の特徴量へ hr_bpm / rppg_quality を足す。
+"""
+
+from __future__ import annotations
+
+from collections import deque
+
+import numpy as np
+
+from ..contracts import FaceLandmarks, Features, Frame
+from ..features import landmark_ids as ids
+
+
+def pos_signal(rgb: np.ndarray) -> np.ndarray:
+    """RGB 時系列(N,3) → 脈波(N,)。POS法。平均色の時間変化から拍成分を取り出す。"""
+    c = np.asarray(rgb, dtype=float)
+    if c.ndim != 2 or c.shape[0] < 2 or c.shape[1] != 3:
+        return np.zeros(max(0, c.shape[0]))
+
+    # 各チャンネルを時間平均で割って、照明の絶対値に依存しないようにする。
+    mean = np.mean(c, axis=0)
+    mean[mean < 1e-8] = 1e-8
+    cn = c / mean
+
+    # 肌色平面に直交する2方向へ射影し、分散比で足し合わせる（POSの肝）。
+    s1 = cn[:, 1] - cn[:, 2]
+    s2 = cn[:, 1] + cn[:, 2] - 2.0 * cn[:, 0]
+    std2 = np.std(s2)
+    alpha = np.std(s1) / std2 if std2 > 1e-8 else 0.0
+    h = s1 + alpha * s2
+    return h - np.mean(h)
+
+
+def estimate_hr(
+    signal: np.ndarray,
+    fs: float,
+    min_bpm: float = 42.0,
+    max_bpm: float = 180.0,
+) -> tuple[float, float]:
+    """脈波と標本化周波数[Hz] → (心拍[bpm], 品質0..1)。
+
+    品質は帯域内でピークがどれだけ突出しているか（ピーク電力 / 帯域電力）。低いほど信用しない。
+    帯域内に成分が無い・標本が足りない場合は (nan, 0)。
+    """
+    x = np.asarray(signal, dtype=float).ravel()
+    if x.size < 8 or fs <= 0:
+        return float("nan"), 0.0
+
+    x = (x - np.mean(x)) * np.hanning(x.size)
+    freqs = np.fft.rfftfreq(x.size, d=1.0 / fs)
+    power = np.abs(np.fft.rfft(x)) ** 2
+
+    band = (freqs >= min_bpm / 60.0) & (freqs <= max_bpm / 60.0)
+    if not np.any(band) or np.sum(power[band]) < 1e-12:
+        return float("nan"), 0.0
+
+    band_power = power[band]
+    band_freqs = freqs[band]
+    peak = int(np.argmax(band_power))
+    hr = float(band_freqs[peak] * 60.0)
+    quality = float(band_power[peak] / np.sum(band_power))
+    return hr, quality
+
+
+def _forehead_roi_mean(image: np.ndarray, landmarks: FaceLandmarks) -> np.ndarray | None:
+    """額あたりの肌領域の平均色(RGB)を返す。取れなければ None。"""
+    h, w = image.shape[:2]
+    lx, ly = landmarks.pixel(ids.LEFT_EYE_OUTER)
+    rx, ry = landmarks.pixel(ids.RIGHT_EYE_OUTER)
+    eye_span = float(np.hypot(rx - lx, ry - ly))
+    if eye_span < 1.0:
+        return None
+
+    cx = (lx + rx) / 2.0
+    cy = (ly + ry) / 2.0 - 0.4 * eye_span  # 目の上＝額
+    half_w = 0.25 * eye_span
+    half_h = 0.1 * eye_span
+
+    x0 = max(0, int(cx - half_w))
+    x1 = min(w, int(cx + half_w))
+    y0 = max(0, int(cy - half_h))
+    y1 = min(h, int(cy + half_h))
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+
+    patch = image[y0:y1, x0:x1].reshape(-1, image.shape[2])[:, :3]
+    mean_bgr = patch.mean(axis=0)
+    return mean_bgr[::-1].astype(float)  # OpenCV は BGR。RGB 順にして返す。
+
+
+class RppgEstimator:
+    """肌色バッファを持ち、貯まったら心拍を推定して特徴量へ足す。"""
+
+    def __init__(
+        self,
+        fps: float = 30.0,
+        window_seconds: float = 10.0,
+        min_bpm: float = 42.0,
+        max_bpm: float = 180.0,
+    ) -> None:
+        self._fps = fps
+        self._min_bpm = min_bpm
+        self._max_bpm = max_bpm
+        self._maxlen = max(2, int(window_seconds * fps))
+        # 推定を始める前に、窓の半分ぶんは貯める（短すぎる窓は当てにならない）。
+        self._min_samples = max(8, self._maxlen // 2)
+        self._buf: deque[tuple[float, np.ndarray]] = deque(maxlen=self._maxlen)
+
+    def augment(self, frame: Frame, landmarks: FaceLandmarks, features: Features) -> Features:
+        if not landmarks.detected:
+            return features
+        rgb = _forehead_roi_mean(frame.image, landmarks)
+        if rgb is None:
+            return features
+
+        self._buf.append((features.timestamp, rgb))
+        if len(self._buf) < self._min_samples:
+            return features
+
+        times = np.array([t for t, _ in self._buf])
+        series = np.array([c for _, c in self._buf])
+        fs = self._effective_fs(times)
+        hr, quality = estimate_hr(pos_signal(series), fs, self._min_bpm, self._max_bpm)
+
+        values = dict(features.values)
+        values["hr_bpm"] = hr
+        values["rppg_quality"] = quality
+        return Features(values=values, timestamp=features.timestamp, face_present=True)
+
+    def _effective_fs(self, times: np.ndarray) -> float:
+        # 実フレーム間隔から標本化周波数を出す。取れなければ公称 fps。
+        span = float(times[-1] - times[0])
+        if span <= 0:
+            return self._fps
+        return (times.size - 1) / span
