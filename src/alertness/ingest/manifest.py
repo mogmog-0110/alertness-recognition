@@ -1,6 +1,8 @@
 """取り込み用の正規化スキーマ。動画1本と、その時間区間ごとの軸別・段階ラベル。
 
-正準ラベルは2軸（drowsiness / distraction）× 4段階（none/low/medium/high）。
+正準ラベルは AXES の各軸 × 4段階（none/low/medium/high）。区間には「付いている軸だけ」を
+持たせ、指定の無い軸は未アノテ（空）として扱う。これで片軸しか情報が無いデータ（眠気だけ、
+ストレスだけ 等）を、他軸を none と誤って断定せずに取り込める。
 外部データセットは配布形式がバラバラなので、まずこの共通形に落としてから特徴抽出に渡す。
 配布形式→この形への変換は核の外で行い、核には manifest だけが渡る。
 """
@@ -8,20 +10,21 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 LEVELS = ("none", "low", "medium", "high")
-AXES = ("drowsiness", "distraction")
+# 許容する軸名の語彙。ここに無い軸名は typo とみなして弾く。
+AXES = ("drowsiness", "distraction", "concentration", "stress")
 
 
 @dataclass(frozen=True)
 class Segment:
     start: float  # 秒
     end: float  # 秒（この時刻は含まない）
-    drowsiness: str  # LEVELS のいずれか
-    distraction: str
+    levels: Mapping[str, str]  # 軸名→段階（LEVELS）。付いている軸だけを持つ
 
 
 @dataclass(frozen=True)
@@ -32,11 +35,11 @@ class ClipManifest:
     segments: tuple[Segment, ...]
 
     def labels_at(self, timestamp: float) -> dict[str, str]:
-        # 区間に当たらない時刻は空＝無ラベル（採点対象外）として扱う。
+        # 区間に当たる時刻は、その区間が持つ軸のラベルを返す。当たらない時刻は空（無ラベル）。
         for seg in self.segments:
             if seg.start <= timestamp < seg.end:
-                return {"drowsiness": seg.drowsiness, "distraction": seg.distraction}
-        return {"drowsiness": "", "distraction": ""}
+                return dict(seg.levels)
+        return {}
 
 
 def _level(value: object) -> str:
@@ -46,9 +49,12 @@ def _level(value: object) -> str:
     return v
 
 
-def _axes(data: dict) -> tuple[str, str]:
-    # 指定の無い軸は none（例: 眠気データに注意逸脱の情報が無い場合）。
-    return _level(data.get("drowsiness", "none")), _level(data.get("distraction", "none"))
+def _levels(data: dict) -> Mapping[str, str]:
+    # data に含まれる軸だけを段階へ写す。1軸も無い区間は誤り。
+    levels = {axis: _level(data[axis]) for axis in AXES if axis in data}
+    if not levels:
+        raise ValueError(f"軸ラベルがありません（{AXES} のいずれかが必要）: {data}")
+    return MappingProxyType(levels)
 
 
 def from_dict(data: dict) -> ClipManifest:
@@ -65,13 +71,11 @@ def from_dict(data: dict) -> ClipManifest:
             start, end = float(s["start"]), float(s["end"])
             if start >= end:
                 raise ValueError(f"区間の start は end より前である必要があります: {s}")
-            drowsiness, distraction = _axes(s)
-            segments.append(Segment(start, end, drowsiness, distraction))
+            segments.append(Segment(start, end, _levels(s)))
         segments = tuple(segments)
-    elif "drowsiness" in data or "distraction" in data:
+    elif any(axis in data for axis in AXES):
         # 動画1本まるごと1ラベル（動画単位ラベルの公開データ向け）。
-        drowsiness, distraction = _axes(data)
-        segments = (Segment(0.0, float("inf"), drowsiness, distraction),)
+        segments = (Segment(0.0, float("inf"), _levels(data)),)
     else:
         raise ValueError("manifest に segments も軸ラベルもありません。")
 

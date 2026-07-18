@@ -40,6 +40,12 @@ assessment:
     - name: distraction       # 注意逸脱
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [head_turn, gaze_off]
+    - name: concentration     # 集中（用途依存。engagement 系データで学習する想定）
+      levels: { low: 0.3, medium: 0.6, high: 0.8 }
+      cues: []                # 当面 ML 経路専用。cue が無い軸は rule 経路では常に none
+    - name: stress            # ストレス・苛立ち（映像単独では判定困難。ML 経路専用）
+      levels: { low: 0.3, medium: 0.6, high: 0.8 }
+      cues: []
 
 # 特徴ごとの判定器（cue）。重みと個別パラメータを持つ。
 # パラメータ名は各 cue クラスの引数と一致させること。

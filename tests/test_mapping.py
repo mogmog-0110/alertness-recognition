@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from alertness.ingest.manifest import load_manifest
 from alertness.ingest.mapping import lookup, ordinal_bin, segment, write_manifest
 
@@ -23,4 +25,10 @@ def test_write_manifest_roundtrips(tmp_path):
 
     m = load_manifest(path)
     assert m.context == "driving"
-    assert m.labels_at(5.0) == {"drowsiness": "high", "distraction": "none"}
+    # 付けた軸だけが残る（distraction は none と補完しない）。
+    assert m.labels_at(5.0) == {"drowsiness": "high"}
+
+
+def test_segment_rejects_unknown_axis():
+    with pytest.raises(ValueError):
+        segment(0, 10, sleepiness="high")
