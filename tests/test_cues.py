@@ -91,3 +91,25 @@ def test_hr_elevation_inactive_without_rppg():
     result = HrElevationCue().evaluate(obs)
     assert not result.active
     assert result.score == 0.0
+
+
+def test_hr_elevation_uses_hrv_when_available():
+    # HRV(RMSSD)が本人基準(高RMSSD)より下がると、HRV経由でストレスを出す。
+    calm = [Features({"hrv_rmssd": 60.0, "rppg_quality": 0.4}, i * 0.1) for i in range(500)]
+    stressed = [
+        Features({"hrv_rmssd": 25.0, "rppg_quality": 0.4}, 50.0 + i * 0.1) for i in range(60)
+    ]
+    frames = calm + stressed
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    result = HrElevationCue(rmssd_span=25.0).evaluate(obs)
+    assert result.detail.startswith("HRV")
+    assert result.active
+
+
+def test_hr_elevation_falls_back_to_hr_without_hrv():
+    # HRV 標本が無ければ HR に退避する。
+    frames = [Features({"hr_bpm": 100.0, "rppg_quality": 0.4}, i * 0.1) for i in range(60)]
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    result = HrElevationCue(baseline_bpm=70.0).evaluate(obs)
+    assert result.detail.startswith("HR ")  # HRV ではなく HR 経由
+    assert result.active

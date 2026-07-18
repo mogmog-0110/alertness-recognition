@@ -126,6 +126,7 @@ def build_rppg(config: dict[str, Any]):
         window_seconds=rcfg.get("window_seconds", 10.0),
         min_bpm=rcfg.get("min_bpm", 42.0),
         max_bpm=rcfg.get("max_bpm", 180.0),
+        hrv_min_quality=rcfg.get("hrv_min_quality", 0.25),
     )
 
 

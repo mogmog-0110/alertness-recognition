@@ -89,6 +89,43 @@ def test_forehead_roi_box_none_when_eyes_coincide():
     assert forehead_roi_box(lm, 200, 200) is None
 
 
+def test_augment_emits_hrv_in_clean_full_window():
+    # 品質が高く窓が満杯なら HRV(RMSSD) が特徴に乗る。
+    fs, size = 30.0, 64
+    est = RppgEstimator(fps=fs, window_seconds=12.0, hrv_min_quality=0.05)
+    landmarks = _landmarks_with_eyes(size)
+    rgb = _synthetic_rgb(72.0, fs, 12.0)  # 12秒＝窓満杯、14拍ほど
+
+    out = None
+    for i, (r, g, b) in enumerate(rgb):
+        image = np.zeros((size, size, 3), dtype=np.uint8)
+        image[:, :] = (int(b * 255), int(g * 255), int(r * 255))  # 全面を脈動色に
+        frame = Frame(image=image, index=i, timestamp=i / fs)
+        out = est.augment(frame, landmarks, Features({}, i / fs))
+
+    assert out is not None
+    assert "hrv_rmssd" in out.values
+    assert out.values["hrv_rmssd"] > 0
+
+
+def test_augment_no_hrv_before_full_window():
+    # 窓が満杯になる前は HRV を出さない（拍精度が要るため）。
+    fs, size = 30.0, 64
+    est = RppgEstimator(fps=fs, window_seconds=12.0, hrv_min_quality=0.05)
+    landmarks = _landmarks_with_eyes(size)
+    rgb = _synthetic_rgb(72.0, fs, 7.0)  # 窓(12s)未満
+
+    out = None
+    for i, (r, g, b) in enumerate(rgb):
+        image = np.zeros((size, size, 3), dtype=np.uint8)
+        image[:, :] = (int(b * 255), int(g * 255), int(r * 255))
+        frame = Frame(image=image, index=i, timestamp=i / fs)
+        out = est.augment(frame, landmarks, Features({}, i / fs))
+
+    assert out is not None
+    assert "hrv_rmssd" not in out.values
+
+
 def test_augment_noop_when_face_absent():
     est = RppgEstimator()
     landmarks = FaceLandmarks(points=np.zeros((470, 3)), image_size=(64, 64), detected=False)

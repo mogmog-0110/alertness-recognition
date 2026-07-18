@@ -72,6 +72,7 @@ rppg:
   window_seconds: 10          # 心拍推定に使う時間窓
   min_bpm: 42
   max_bpm: 180
+  hrv_min_quality: 0.25       # この品質を超えた安定窓のときだけ HRV(RMSSD) を出す（機会的）
 
 # cue の結果を統合して最終判定を出す方針
 policy:

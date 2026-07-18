@@ -10,10 +10,13 @@ Pipeline から augment を呼び、既存の特徴量へ hr_bpm / rppg_quality 
 
 from __future__ import annotations
 
+import math
 from collections import deque
 
 import numpy as np
 
+from ..bio.hrv import rmssd, rr_intervals_ms
+from ..bio.peaks import detect_peaks
 from ..contracts import FaceLandmarks, Features, Frame
 from ..features import landmark_ids as ids
 
@@ -118,6 +121,8 @@ class RppgEstimator:
         window_seconds: float = 10.0,
         min_bpm: float = 42.0,
         max_bpm: float = 180.0,
+        hrv_min_quality: float = 0.25,
+        hrv_min_beats: int = 8,
     ) -> None:
         self._fps = fps
         self._min_bpm = min_bpm
@@ -125,6 +130,9 @@ class RppgEstimator:
         self._maxlen = max(2, int(window_seconds * fps))
         # 推定を始める前に、窓の半分ぶんは貯める（短すぎる窓は当てにならない）。
         self._min_samples = max(8, self._maxlen // 2)
+        # HRV は機会的：品質が高く窓が満杯のときだけ出す（拍の精度が要るため）。
+        self._hrv_min_quality = hrv_min_quality
+        self._hrv_min_beats = hrv_min_beats
         self._buf: deque[tuple[float, np.ndarray]] = deque(maxlen=self._maxlen)
 
     def augment(self, frame: Frame, landmarks: FaceLandmarks, features: Features) -> Features:
@@ -141,12 +149,27 @@ class RppgEstimator:
         times = np.array([t for t, _ in self._buf])
         series = np.array([c for _, c in self._buf])
         fs = self._effective_fs(times)
-        hr, quality = estimate_hr(pos_signal(series), fs, self._min_bpm, self._max_bpm)
+        pulse = pos_signal(series)
+        hr, quality = estimate_hr(pulse, fs, self._min_bpm, self._max_bpm)
 
         values = dict(features.values)
         values["hr_bpm"] = hr
         values["rppg_quality"] = quality
+        hrv = self._hrv(pulse, fs, quality)
+        if hrv is not None:
+            values["hrv_rmssd"] = hrv
         return Features(values=values, timestamp=features.timestamp, face_present=True)
+
+    def _hrv(self, pulse: np.ndarray, fs: float, quality: float) -> float | None:
+        # 品質が高く窓が満杯（＝安定して長い）ときだけ HRV(RMSSD) を返す。それ以外は None。
+        if quality < self._hrv_min_quality or len(self._buf) < self._maxlen:
+            return None
+        peaks = detect_peaks(pulse, fs, self._min_bpm, self._max_bpm)
+        rr = rr_intervals_ms(peaks / fs)
+        if rr.size < self._hrv_min_beats:
+            return None
+        value = rmssd(rr)
+        return None if math.isnan(value) else float(value)
 
     def _effective_fs(self, times: np.ndarray) -> float:
         # 実フレーム間隔から標本化周波数を出す。取れなければ公称 fps。
