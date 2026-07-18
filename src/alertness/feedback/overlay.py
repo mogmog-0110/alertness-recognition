@@ -33,16 +33,39 @@ _DOT_POINTS = (
     ids.MOUTH_RIGHT,
 )
 
+# 顔全体のメッシュ（テッセレーション）の辺。mediapipe から一度だけ取り込む。
+_TESSELLATION: tuple[tuple[int, int], ...] | None = None
+_TESS_LOADED = False
+
+
+def _tessellation() -> tuple[tuple[int, int], ...] | None:
+    global _TESSELLATION, _TESS_LOADED
+    if not _TESS_LOADED:
+        _TESS_LOADED = True
+        try:
+            from mediapipe.solutions.face_mesh import (  # type: ignore[import]
+                FACEMESH_TESSELLATION,
+            )
+
+            _TESSELLATION = tuple(FACEMESH_TESSELLATION)
+        except Exception:
+            _TESSELLATION = None  # mediapipe 無し等。全点ドットで代替する。
+    return _TESSELLATION
+
 
 def render(
     obs: Observation,
     assessment: Assessment,
     draw_landmarks: bool = True,
     debug: bool = False,
+    draw_mesh: bool = False,
 ) -> np.ndarray:
     img = obs.frame.image.copy()
-    if draw_landmarks and obs.landmarks.detected:
-        _draw_points(img, obs.landmarks)
+    if obs.landmarks.detected:
+        if draw_mesh:
+            _draw_mesh(img, obs.landmarks)
+        elif draw_landmarks:
+            _draw_points(img, obs.landmarks)
     _draw_panel(img, assessment)
     if assessment.alert_level() >= Level.MEDIUM:
         _draw_alert(img)
@@ -76,6 +99,22 @@ def _draw_points(img: np.ndarray, lm: FaceLandmarks) -> None:
             cv2.circle(img, (int(x), int(y)), 2, (255, 0, 0), -1)
 
 
+def _draw_mesh(img: np.ndarray, lm: FaceLandmarks) -> None:
+    # 顔全体のメッシュ。辺が取れれば網目を、無ければ全点をドットで描く。
+    n = lm.points.shape[0]
+    conns = _tessellation()
+    if conns:
+        for a, b in conns:
+            if a < n and b < n:
+                xa, ya = lm.pixel(a)
+                xb, yb = lm.pixel(b)
+                cv2.line(img, (int(xa), int(ya)), (int(xb), int(yb)), (0, 160, 0), 1)
+    else:
+        for i in range(n):
+            x, y = lm.pixel(i)
+            cv2.circle(img, (int(x), int(y)), 1, (0, 160, 0), -1)
+
+
 def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
     x, y, step = 16, 40, 66
     for dim in assessment.dimensions.values():
@@ -89,8 +128,9 @@ def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
         y += step
 
 
-def draw_guided(img: np.ndarray, title: str, instruction: str, phase: str,
-                remaining: float, progress: float) -> None:
+def draw_guided(
+    img: np.ndarray, title: str, instruction: str, phase: str, remaining: float, progress: float
+) -> None:
     # ガイドの指示は上部中央に置く（左上の検知パネルと被らないように）。
     h, w = img.shape[:2]
     from . import jptext

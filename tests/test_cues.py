@@ -57,12 +57,31 @@ def test_attention_hold_inactive_when_looking_away():
 
 
 def test_hr_elevation_active_when_hr_elevated():
+    # 履歴が浅い（6秒）ので固定 baseline_bpm=70 で判定される。
     frames = [Features({"hr_bpm": 100.0, "rppg_quality": 0.5}, i * 0.1) for i in range(60)]
     obs = make_observation(frames[-1], FakeHistory(frames))
-    cue = HrElevationCue(baseline_bpm=70.0, span_bpm=30.0)
+    cue = HrElevationCue(baseline_bpm=70.0, span_bpm=25.0)
     result = cue.evaluate(obs)
     assert result.active
     assert result.score >= 1.0
+
+
+def test_hr_elevation_adaptive_baseline_ignores_steady_high_hr():
+    # 長時間ずっと同じ高さ（安静が高心拍の人）だと、本人基準に対して上がっていない＝none。
+    frames = [Features({"hr_bpm": 95.0, "rppg_quality": 0.5}, i * 0.1) for i in range(600)]
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=45.0)
+    assert not cue.evaluate(obs).active
+
+
+def test_hr_elevation_adaptive_detects_rise_over_resting():
+    # 安静(70)がしばらく続いた後に上昇(100)すると、本人基準からの上振れを拾う。
+    calm = [Features({"hr_bpm": 70.0, "rppg_quality": 0.5}, i * 0.1) for i in range(500)]
+    spike = [Features({"hr_bpm": 100.0, "rppg_quality": 0.5}, 50.0 + i * 0.1) for i in range(60)]
+    frames = calm + spike
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=45.0)
+    assert cue.evaluate(obs).active
 
 
 def test_hr_elevation_inactive_without_rppg():

@@ -176,6 +176,7 @@ def build_sinks(
                 feedback.get("debug", False),
                 feedback.get("sounds", {}),
                 labels if recording else None,
+                feedback.get("face_mesh", False),
             )
         )
     if recording:
