@@ -64,10 +64,11 @@ cues:
   # adaptive_baseline=true で履歴から安静時を推定（履歴が浅い間は baseline_bpm で代用）。
   hr_elevation: { weight: 1.0, span_bpm: 25, min_quality: 0.05, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 45, baseline_percentile: 25 }
 
-# カメラからの心拍推定（rPPG）。stress の特徴源。重いので既定は無効。
-# 有効にすると各フレームに hr_bpm / rppg_quality が乗る（数秒ぶん貯まってから）。
+# カメラからの心拍推定（rPPG）。stress の特徴源。numpy だけの軽い処理なので既定で有効。
+# 起動後 数秒ぶん貯まると各フレームに hr_bpm / rppg_quality が乗る。stress を使わない用途では
+# false にしてよい（その分の計算を省ける）。
 rppg:
-  enabled: false
+  enabled: true
   window_seconds: 10          # 心拍推定に使う時間窓
   min_bpm: 42
   max_bpm: 180
