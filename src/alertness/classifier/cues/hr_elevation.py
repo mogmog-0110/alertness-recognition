@@ -25,7 +25,7 @@ class HrElevationCue:
     def __init__(
         self,
         span_bpm: float = 25.0,
-        min_quality: float = 0.1,
+        min_quality: float = 0.05,
         sustained_seconds: float = 5.0,
         baseline_bpm: float = 70.0,
         adaptive_baseline: bool = True,

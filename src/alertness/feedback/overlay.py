@@ -7,11 +7,14 @@ debug=True のときは生の特徴量も出し、しきい値調整の手がか
 
 from __future__ import annotations
 
+import math
+
 import cv2
 import numpy as np
 
 from ..contracts import Assessment, FaceLandmarks, Level, Observation
 from ..features import landmark_ids as ids
+from ..features.rppg import forehead_roi_box
 
 WINDOW_NAME = "Alertness"
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -69,6 +72,8 @@ def render(
             _draw_points(img, obs.landmarks)
     _draw_panel(img, assessment)
     if stress_meter:
+        if obs.landmarks.detected:
+            _draw_rppg_roi(img, obs.landmarks)  # ストレス＝額のどこを測っているか
         _draw_stress_meter(img, obs, assessment)
     if assessment.alert_level() >= Level.MEDIUM:
         _draw_alert(img)
@@ -131,6 +136,17 @@ def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
         y += step
 
 
+def _draw_rppg_roi(img: np.ndarray, lm: FaceLandmarks) -> None:
+    # rPPG が心拍を測る額の矩形を描く。ここが顔から外れていると HR が取れない。
+    h, w = img.shape[:2]
+    box = forehead_roi_box(lm, w, h)
+    if box is None:
+        return
+    x0, y0, x1, y1 = box
+    cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 255), 1)
+    _text(img, "rPPG", (x0, max(12, y0 - 4)), 0.4, (0, 255, 255))
+
+
 def _draw_stress_meter(img: np.ndarray, obs: Observation, assessment: Assessment) -> None:
     # 右上に、ストレスの安静基準キャリブの進行度を出す（起動時キャリブと同じ見た目のバー）。
     cue = next((c for c in assessment.cues if c.name == "hr_elevation"), None)
@@ -149,6 +165,13 @@ def _draw_stress_meter(img: np.ndarray, obs: Observation, assessment: Assessment
     cv2.rectangle(img, (x, bar_y), (x + bw, bar_y + 14), (220, 220, 220), 1)
     label = "calibrated" if done else f"{progress * 100:.0f}%"
     _text(img, label, (x, bar_y + 34), 0.5, color)
+
+    # 0% から進まないときの理由。HRが出ていなければ rPPG 無効/未取得、出ているのに
+    # 進まなければ信号品質が閾値未満（照明・動きを見直す合図）。
+    if not done and progress <= 0.0:
+        hr = obs.features.get("hr_bpm", float("nan"))
+        hint = "low signal" if not math.isnan(hr) else "no rPPG signal"
+        _text(img, hint, (x, bar_y + 52), 0.42, (0, 170, 255))
 
 
 def draw_guided(

@@ -69,9 +69,14 @@ def estimate_hr(
     return hr, quality
 
 
-def _forehead_roi_mean(image: np.ndarray, landmarks: FaceLandmarks) -> np.ndarray | None:
-    """額あたりの肌領域の平均色(RGB)を返す。取れなければ None。"""
-    h, w = image.shape[:2]
+def forehead_roi_box(
+    landmarks: FaceLandmarks, width: int, height: int
+) -> tuple[int, int, int, int] | None:
+    """rPPG が肌色を測る額の矩形 (x0, y0, x1, y1)。取れなければ None。
+
+    目尻2点から目幅を出し、その上（額）に矩形を置く。画面表示（どこを測っているかの
+    可視化）と平均色サンプリングの両方が同じ矩形を使えるよう、計算をここに集約する。
+    """
     lx, ly = landmarks.pixel(ids.LEFT_EYE_OUTER)
     rx, ry = landmarks.pixel(ids.RIGHT_EYE_OUTER)
     eye_span = float(np.hypot(rx - lx, ry - ly))
@@ -84,12 +89,21 @@ def _forehead_roi_mean(image: np.ndarray, landmarks: FaceLandmarks) -> np.ndarra
     half_h = 0.1 * eye_span
 
     x0 = max(0, int(cx - half_w))
-    x1 = min(w, int(cx + half_w))
+    x1 = min(width, int(cx + half_w))
     y0 = max(0, int(cy - half_h))
-    y1 = min(h, int(cy + half_h))
+    y1 = min(height, int(cy + half_h))
     if x1 - x0 < 2 or y1 - y0 < 2:
         return None
+    return x0, y0, x1, y1
 
+
+def _forehead_roi_mean(image: np.ndarray, landmarks: FaceLandmarks) -> np.ndarray | None:
+    """額あたりの肌領域の平均色(RGB)を返す。取れなければ None。"""
+    h, w = image.shape[:2]
+    box = forehead_roi_box(landmarks, w, h)
+    if box is None:
+        return None
+    x0, y0, x1, y1 = box
     patch = image[y0:y1, x0:x1].reshape(-1, image.shape[2])[:, :3]
     mean_bgr = patch.mean(axis=0)
     return mean_bgr[::-1].astype(float)  # OpenCV は BGR。RGB 順にして返す。

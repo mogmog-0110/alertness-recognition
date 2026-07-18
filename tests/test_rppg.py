@@ -5,7 +5,12 @@ import math
 import numpy as np
 
 from alertness.contracts import FaceLandmarks, Features, Frame
-from alertness.features.rppg import RppgEstimator, estimate_hr, pos_signal
+from alertness.features.rppg import (
+    RppgEstimator,
+    estimate_hr,
+    forehead_roi_box,
+    pos_signal,
+)
 
 
 def _synthetic_rgb(hr_bpm: float, fs: float, seconds: float) -> np.ndarray:
@@ -64,6 +69,24 @@ def test_augment_adds_hr_after_enough_frames():
     assert out is not None
     assert "hr_bpm" in out.values
     assert "rppg_quality" in out.values
+
+
+def test_forehead_roi_box_above_eyes():
+    lm = _landmarks_with_eyes(200)
+    box = forehead_roi_box(lm, 200, 200)
+    assert box is not None
+    x0, y0, x1, y1 = box
+    # 目（y=0.6*200=120）より上に、幅を持った矩形が出る。
+    assert x1 > x0 and y1 > y0
+    assert y1 <= 120
+
+
+def test_forehead_roi_box_none_when_eyes_coincide():
+    points = np.zeros((470, 3))
+    points[33] = (0.5, 0.5, 0.0)
+    points[263] = (0.5, 0.5, 0.0)  # 目尻が同じ点＝顔幅ゼロ
+    lm = FaceLandmarks(points=points, image_size=(200, 200), detected=True)
+    assert forehead_roi_box(lm, 200, 200) is None
 
 
 def test_augment_noop_when_face_absent():
