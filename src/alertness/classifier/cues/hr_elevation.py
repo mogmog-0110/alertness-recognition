@@ -49,10 +49,11 @@ class HrElevationCue:
             return CueResult(self.name, self.dimension, 0.0, False, "心拍なし")
 
         current = float(np.median([h for _, h in recent]))
-        baseline = self._baseline(obs)
+        baseline, ready = self._baseline(obs)
         score = clamp((current - baseline) / self.span_bpm) if self.span_bpm > 0 else 0.0
         active = score >= 0.5
-        detail = f"HR {current:.0f}/base {baseline:.0f}"
+        # 基準がまだ本人の履歴から確定していない間は (warm) を付ける。
+        detail = f"HR {current:.0f} base {baseline:.0f}{'' if ready else ' (warm)'}"
         return CueResult(self.name, self.dimension, score, active, detail)
 
     def _valid_hr(self, obs: Observation, seconds: float) -> list[tuple[float, float]]:
@@ -66,11 +67,12 @@ class HrElevationCue:
             if not math.isnan(h) and q >= self.min_quality
         ]
 
-    def _baseline(self, obs: Observation) -> float:
+    def _baseline(self, obs: Observation) -> tuple[float, bool]:
+        # 返り値は (基準bpm, 確定か)。確定＝本人の履歴から推定できた状態。
         if not self.adaptive_baseline:
-            return self.baseline_bpm
+            return self.baseline_bpm, True
         samples = self._valid_hr(obs, self.baseline_seconds)
         # 履歴が baseline_seconds の6割以上を覆っていれば、本人の下側心拍を基準にする。
         if samples and (samples[-1][0] - samples[0][0]) >= 0.6 * self.baseline_seconds:
-            return float(np.percentile([h for _, h in samples], self.baseline_percentile))
-        return self.baseline_bpm
+            return float(np.percentile([h for _, h in samples], self.baseline_percentile)), True
+        return self.baseline_bpm, False

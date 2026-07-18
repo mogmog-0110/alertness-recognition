@@ -83,6 +83,7 @@ feedback:
   window: true                # OpenCV ウィンドウに表示
   draw_landmarks: true
   face_mesh: false            # true にすると顔全体のメッシュ（網目）を描く
+  stress_meter: true          # 右上に rPPG 心拍・安静基準・信号品質・ストレスをメーター表示
   debug: true                 # 画面右下に全特徴量を数値表示。しきい値調整時に使う
   alert_cooldown_seconds: 5.0
   audio: true                 # やわらかいチャイムで警告（Windows）

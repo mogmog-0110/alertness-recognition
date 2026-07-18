@@ -26,16 +26,23 @@ class OpenCvWindowSink:
         sounds: Mapping[str, str] | None = None,
         labels: LabelState | None = None,
         draw_mesh: bool = False,
+        stress_meter: bool = False,
     ) -> None:
         self._draw_landmarks = draw_landmarks
         self._draw_mesh = draw_mesh
+        self._stress_meter = stress_meter
         self._debug = debug
         self._labels = labels  # 録画ラベル表示用（録画中のみ渡される）
         self._alert = AudioAlert(alert_cooldown_seconds, audio, sounds)
 
     def emit(self, obs: Observation, assessment: Assessment) -> None:
         image = overlay.render(
-            obs, assessment, self._draw_landmarks, self._debug, self._draw_mesh
+            obs,
+            assessment,
+            self._draw_landmarks,
+            self._debug,
+            self._draw_mesh,
+            self._stress_meter,
         )
         if self._labels is not None:
             overlay.draw_record_label(image, self._labels.value)
