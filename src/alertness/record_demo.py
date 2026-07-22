@@ -25,9 +25,20 @@ _TITLE_PREFIX = "title="
 def _ffmpeg_cmd(ffmpeg: str, region: str, fps: int, out: Path) -> list[str]:
     # gdigrab は Windows のデスクトップ/ウィンドウを取り込む。title=... で窓単位も可。
     return [
-        ffmpeg, "-y",
-        "-f", "gdigrab", "-framerate", str(fps), "-i", region,
-        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        ffmpeg,
+        "-y",
+        "-f",
+        "gdigrab",
+        "-framerate",
+        str(fps),
+        "-i",
+        region,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
         str(out),
     ]
 
@@ -35,7 +46,7 @@ def _ffmpeg_cmd(ffmpeg: str, region: str, fps: int, out: Path) -> list[str]:
 def _window_title(region: str) -> str | None:
     """region が `title=...` のときウィンドウ名を返す。デスクトップ録画なら None。"""
     if region.startswith(_TITLE_PREFIX):
-        return region[len(_TITLE_PREFIX):]
+        return region[len(_TITLE_PREFIX) :]
     return None
 
 
@@ -64,9 +75,7 @@ def _wait_for_window(title: str, timeout: float) -> bool:
 
 
 def _start_recording(ffmpeg: str, region: str, fps: int, out: Path) -> subprocess.Popen:
-    rec = subprocess.Popen(
-        _ffmpeg_cmd(ffmpeg, region, fps, out), stdin=subprocess.PIPE
-    )
+    rec = subprocess.Popen(_ffmpeg_cmd(ffmpeg, region, fps, out), stdin=subprocess.PIPE)
     print(f"[record] 録画開始 -> {out}")
     return rec
 
@@ -122,10 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         if _wait_for_window(title, timeout=20.0):
             rec = _start_recording(ffmpeg, args.region, args.fps, out)
         else:
-            print(
-                f"[record] ウィンドウ '{title}' が現れませんでした。"
-                "録画なしでデモを続けます。"
-            )
+            print(f"[record] ウィンドウ '{title}' が現れませんでした。録画なしでデモを続けます。")
 
     try:
         app_proc.wait()  # q かウィンドウを閉じるまで待つ

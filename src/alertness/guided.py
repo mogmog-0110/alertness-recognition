@@ -90,6 +90,7 @@ class GuidedSession:
             if start <= elapsed < end:
                 label = prompt.label if phase == "hold" else ""
                 title = prompt.title if phase == "hold" else f"次: {prompt.title}"
-                return GuidedStep(title, prompt.instruction, label, phase, end - elapsed,
-                                  elapsed / self._total)
+                return GuidedStep(
+                    title, prompt.instruction, label, phase, end - elapsed, elapsed / self._total
+                )
         return GuidedStep("完了", "おつかれさまでした", "", "done", 0.0, 1.0)

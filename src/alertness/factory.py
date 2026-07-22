@@ -47,7 +47,10 @@ def build_source(config: dict[str, Any], video: str | None = None) -> FrameSourc
         from .sources.webcam import WebcamSource
 
         return WebcamSource(
-            camera.get("index", 0), camera.get("width", 1280), camera.get("height", 720)
+            camera.get("index", 0),
+            camera.get("width", 1280),
+            camera.get("height", 720),
+            camera.get("target_fps", 0),
         )
     if stype == "video":
         from .sources.video_file import VideoFileSource
@@ -139,7 +142,8 @@ def build_rppg(config: dict[str, Any]):
         min_bpm=rcfg.get("min_bpm", 42.0),
         max_bpm=rcfg.get("max_bpm", 180.0),
         hrv_min_quality=rcfg.get("hrv_min_quality", 0.25),
-        hrv_enabled=rcfg.get("hrv_enabled", False),
+        hrv_enabled=rcfg.get("hrv_enabled", True),
+        hrv_upsample=rcfg.get("hrv_upsample", 16),
     )
 
 

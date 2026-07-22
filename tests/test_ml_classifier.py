@@ -80,9 +80,7 @@ def test_missing_feature_defaults_to_zero():
 def test_severity_uses_probability_expectation():
     classes = ["high", "low", "medium", "none"]  # 並びが順序と違っても正しく重み付く
     proba = [0.5, 0.0, 0.0, 0.5]  # high と none が半々 → 期待段階 1.5/3
-    clf = MLClassifier(
-        _bundle({"label_drowsiness": _StubModel("high", classes, proba)}, ["ear"])
-    )
+    clf = MLClassifier(_bundle({"label_drowsiness": _StubModel("high", classes, proba)}, ["ear"]))
     score = clf.assess(_obs({"ear": 0.1})).dimensions["drowsiness"].score
 
     assert score == pytest.approx(0.5)

@@ -16,7 +16,7 @@ from collections import deque
 import numpy as np
 
 from ..bio.hrv import rmssd, rr_intervals_ms
-from ..bio.peaks import detect_peaks
+from ..bio.peaks import peak_times
 from ..contracts import FaceLandmarks, Features, Frame
 from ..features import landmark_ids as ids
 
@@ -148,7 +148,8 @@ class RppgEstimator:
         max_bpm: float = 180.0,
         hrv_min_quality: float = 0.25,
         hrv_min_beats: int = 8,
-        hrv_enabled: bool = False,
+        hrv_enabled: bool = True,
+        hrv_upsample: int = 16,
     ) -> None:
         self._fps = fps
         self._min_bpm = min_bpm
@@ -156,11 +157,11 @@ class RppgEstimator:
         self._maxlen = max(2, int(window_seconds * fps))
         # 推定を始める前に、窓の半分ぶんは貯める（短すぎる窓は当てにならない）。
         self._min_samples = max(8, self._maxlen // 2)
-        # HRV は既定で無効。拍の時刻がフレーム間隔（30fpsで33ms）に量子化されるため、
-        # 完全に規則正しい脈を入れても RMSSD が 25ms 程度出てしまう。人の安静時 RMSSD が
-        # 20〜50ms なので、量子化雑音だけで測りたい範囲を覆ってしまい、値が心臓ではなく
-        # フレーム格子を映す。高フレームレート化か拍位置の補間を入れるまで出さない。
+        # HRV は拍の時刻の精度で決まる。フレーム間隔そのままだと 30fps で RMSSD の下限が
+        # 22ms（人の安静時 20〜50ms と同じ桁）になり測定にならないので、帯域制限補間で
+        # 標本の間を埋める。x16 で下限は 30fps でも 3ms、60fps なら 2ms まで下がる。
         self._hrv_enabled = hrv_enabled
+        self._hrv_upsample = hrv_upsample
         self._hrv_min_quality = hrv_min_quality
         self._hrv_min_beats = hrv_min_beats
         self._buf: deque[tuple[float, np.ndarray]] = deque(maxlen=self._maxlen)
@@ -196,8 +197,8 @@ class RppgEstimator:
             return None
         if quality < self._hrv_min_quality or len(self._buf) < self._maxlen:
             return None
-        peaks = detect_peaks(pulse, fs, self._min_bpm, self._max_bpm)
-        rr = rr_intervals_ms(peaks / fs)
+        times = peak_times(pulse, fs, self._min_bpm, self._max_bpm, self._hrv_upsample)
+        rr = rr_intervals_ms(times)
         if rr.size < self._hrv_min_beats:
             return None
         value = rmssd(rr)

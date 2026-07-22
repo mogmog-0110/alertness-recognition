@@ -64,9 +64,7 @@ def false_alarm_rate(
     return sum(1 for _, p in negatives if p != negative_label) / len(negatives)
 
 
-def miss_rate(
-    y_true: Sequence[str], y_pred: Sequence[str], negative_label: str = "awake"
-) -> float:
+def miss_rate(y_true: Sequence[str], y_pred: Sequence[str], negative_label: str = "awake") -> float:
     # 異常を見逃して正常と判定した割合（見逃し）。
     positives = [(t, p) for t, p in zip(y_true, y_pred, strict=True) if t != negative_label]
     if not positives:

@@ -75,3 +75,31 @@ def test_stage_from_rmssd_unknown_is_empty():
 def test_stage_from_rmssd_rejects_ascending_thresholds():
     with pytest.raises(ValueError):
         stage_from_rmssd(30.0, (20.0, 35.0, 50.0))
+
+
+def test_peak_times_beats_frame_quantization():
+    # ゆらぎゼロの脈。拍の時刻をフレーム格子のまま取ると RMSSD が 20ms 級で出てしまう
+    # （人の安静時 20〜50ms と同じ桁）。帯域制限補間を入れると桁で下がる。
+    from alertness.bio.peaks import peak_times
+
+    fs = 30.0
+    samples = np.arange(int(fs * 20)) / fs
+    signal = np.sin(2 * np.pi * 61.0 / 60.0 * samples)
+
+    raw = rmssd(rr_intervals_ms(peak_times(signal, fs, upsample=1)))
+    fine = rmssd(rr_intervals_ms(peak_times(signal, fs, upsample=16)))
+    assert raw > 15.0  # 補間なしでは量子化だけでこれだけ出る（測りたい範囲と同じ桁）
+    assert fine < 10.0  # 補間すると効果（十数ms）より小さいところまで下がる
+    assert fine < raw / 2.0
+
+
+def test_upsample_bandlimited_preserves_shape_and_length():
+    from alertness.bio.peaks import upsample_bandlimited
+
+    fs = 30.0
+    samples = np.arange(120) / fs
+    signal = np.sin(2 * np.pi * 1.5 * samples)  # 4秒で6周期＝窓に対して周期的
+    dense = upsample_bandlimited(signal, 4)
+    assert dense.size == signal.size * 4
+    assert np.allclose(dense[::4], signal, atol=1e-6)  # 元の標本はそのまま通る
+    assert abs(float(np.max(np.abs(dense))) - 1.0) < 1e-3  # 振幅も保つ

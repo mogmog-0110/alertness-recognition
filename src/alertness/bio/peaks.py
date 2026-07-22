@@ -10,6 +10,37 @@ from __future__ import annotations
 import numpy as np
 
 
+def upsample_bandlimited(signal: np.ndarray, factor: int) -> np.ndarray:
+    """帯域制限補間で標本数を factor 倍にする（FFT のゼロ詰め）。
+
+    拍の時刻はフレーム間隔に量子化される。30fps なら 33ms 刻みで、これは人の RMSSD
+    （安静時 20〜50ms）と同じ桁なので、そのまま拍間隔を作ると心臓ではなくフレーム格子を
+    測ることになる。脈波は帯域制限されているので、標本の間を理論通り埋められる。
+    """
+    x = np.asarray(signal, dtype=float).ravel()
+    if factor <= 1 or x.size < 4:
+        return x
+    return np.fft.irfft(np.fft.rfft(x), x.size * factor) * factor
+
+
+def peak_times(
+    signal: np.ndarray,
+    fs: float,
+    min_bpm: float = 40.0,
+    max_bpm: float = 180.0,
+    upsample: int = 16,
+) -> np.ndarray:
+    """波形から拍の時刻[秒]を返す。標本の間は帯域制限補間で埋める。
+
+    RMSSD のような拍間隔の指標は、ピーク位置の誤差がそのまま効くので、こちらを使う。
+    """
+    if fs <= 0:
+        return np.empty(0, dtype=float)
+    factor = max(1, upsample)
+    dense = upsample_bandlimited(signal, factor)
+    return detect_peaks(dense, fs * factor, min_bpm, max_bpm) / (fs * factor)
+
+
 def detect_peaks(
     signal: np.ndarray,
     fs: float,

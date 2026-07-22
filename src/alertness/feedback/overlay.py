@@ -125,7 +125,7 @@ def _draw_mesh(img: np.ndarray, lm: FaceLandmarks) -> None:
 
 def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
     # バーの長さと段階は「警告の強さ」。集中のように高いほど良い軸は反転して表示される
-    # （low_concentration が伸びる＝集中していない）ので、元のスコアも併記する。
+    # （inattentive が伸びる＝集中していない）ので、元のスコアも併記する。
     x, y, step = 16, 40, 66
     for dim in assessment.dimensions.values():
         color = _COLORS[dim.level]
@@ -231,6 +231,9 @@ def _draw_features(img: np.ndarray, obs: Observation) -> None:
         lines.append(f"{key}: {f.values[key]:.3f}")
     lines.append(f"ear_base: {obs.profile.ear_open_baseline:.3f}")
     lines.append(f"face: {'yes' if f.face_present else 'no'}")
+    measured = getattr(obs.history, "measured_fps", None)
+    if measured:
+        lines.append(f"fps: {measured:.1f}")  # 要求値ではなく実際に流れている値
 
     h, w = img.shape[:2]
     y0 = h - 16 * len(lines) - 8
