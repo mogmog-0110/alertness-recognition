@@ -48,9 +48,12 @@ assessment:
     - name: distraction       # 注意逸脱
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [head_turn, gaze_off]
-    - name: concentration     # 集中（視線・頭部の注視保持で rule 判定。ML でも学習可）
+    - name: concentration     # 集中（視線が対象にあり、かつ走査もしているか。ML でも学習可）
+      # 2つの cue が逆向きの失敗を1本ずつ担当する。attention_buffer=目が離れすぎ、
+      # gaze_scanning=目が貼りついたまま動かない。combine は既定の max なので、
+      # どちらが欠けても警告が立つ。
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: [attention_buffer]
+      cues: [attention_buffer, gaze_scanning]
       alert_on: low           # 集中しているときではなく、していないときに警告する
       alert_name: inattentive
     - name: stress            # ストレス・苛立ち（心拍と表情の一致で rule 判定。ML でも学習可）
@@ -71,6 +74,11 @@ cues:
   head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5 }
   head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5 }
   gaze_off:    { weight: 0.6, off_threshold: 0.035, off_screen_seconds: 2.0 }
+  # 集中(走査): 視線が中心域に留まった割合(PRC)と水平視線のばらつき。留まりすぎ＝走査不足で
+  # 下がる。視線を1点に固定するのは集中ではなく、認知負荷による視野狭窄の兆候。
+  # prc_healthy は文献の 92% をそのまま使えない（アイトラッカー前提で尺度が違う）ため、
+  # 自前のデータで較正すること。手元の収録では中心半径 0.035 で PRC 99% だった。
+  gaze_scanning: { weight: 1.0, window_seconds: 30, center_radius: 0.035, prc_healthy: 0.85, prc_frozen: 1.0, min_spread: 0.004, min_window: 10 }
   # 集中: AttenD 方式の注意バッファ。対象を見ている間は残高が満ち、外れている間は減る。
   # capacity_seconds=2 は「前方から2秒視線を外すと車線内の位置把握が崩れる」という根拠から。
   # on_target_yaw_deg は広めにしてある。yaw_rel は起動時3秒のキャリブが基準なので、そのとき

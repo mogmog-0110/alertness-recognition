@@ -15,6 +15,7 @@ from .classifier.cues.blink import BlinkCue
 from .classifier.cues.eye_closure import EyeClosureCue
 from .classifier.cues.facial_tension import FacialTensionCue
 from .classifier.cues.gaze_off import GazeOffCue
+from .classifier.cues.gaze_scanning import GazeScanningCue
 from .classifier.cues.head_down import HeadDownCue
 from .classifier.cues.head_turn import HeadTurnCue
 from .classifier.cues.hr_elevation import HrElevationCue
@@ -35,6 +36,7 @@ _CUE_REGISTRY = {
     "head_down": HeadDownCue,
     "head_turn": HeadTurnCue,
     "gaze_off": GazeOffCue,
+    "gaze_scanning": GazeScanningCue,
     "attention_buffer": AttentionBufferCue,
     "hr_elevation": HrElevationCue,
     "facial_tension": FacialTensionCue,
