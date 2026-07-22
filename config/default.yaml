@@ -68,11 +68,17 @@ cues:
   # 集中: AttenD 方式の注意バッファ。対象を見ている間は残高が満ち、外れている間は減る。
   # capacity_seconds=2 は「前方から2秒視線を外すと車線内の位置把握が崩れる」という根拠から。
   attention_buffer: { weight: 1.0, capacity_seconds: 2.0, latency_seconds: 0.1, gaze_on_threshold: 0.035, on_target_yaw_deg: 12, refill_rate: 1.0 }
-  # ストレス: rPPG の心拍が「本人の安静時」から span 上がると満点。
+  # ストレス: rPPG の心拍が「本人の安静時」から上がると満点。基準も現在値も中央値で取る
+  # （統計量を揃えないと、変化が無くても推定のばらつきぶん差が正に出る）。満点までの幅は
+  # span_bpm と「ばらつき(MAD)×noise_k」の大きい方で、推定が粗いときほど大きな差を要求する。
+  # min_quality=0.5 は合成波での実測から。これ未満だと採用した推定の1割が20bpm以上ずれ、
+  # span_bpm と同じ桁の誤差が入ってしまう（0.5 以上なら9割点で 2.3bpm）。
+  # 基準は cue 自身が持ち、スコアが freeze_at を超えている間は更新を止める。止めないと、
+  # 上がった状態が新しい「安静」になり、baseline_seconds より長い負荷を見失う。
   # adaptive_baseline=true で履歴から安静時を推定する。その基準が出来上がるまでは判定を出さない
-  # （require_calibration）。頭が max_motion_deg より振れている間は rPPG が当てにならないので
+  # （require_calibration。baseline_seconds の6割＝既定 72 秒）。頭が max_motion_deg より振れている間は rPPG が当てにならないので
   # 判定を止め、直前の値を hold_seconds だけ保つ。
-  hr_elevation: { weight: 1.0, span_bpm: 25, min_quality: 0.05, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 45, baseline_percentile: 25, require_calibration: true, max_motion_deg: 6.0, hold_seconds: 10.0 }
+  hr_elevation: { weight: 1.0, span_bpm: 25, min_quality: 0.5, noise_k: 4.0, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 120, freeze_at: 0.3, require_calibration: true, max_motion_deg: 6.0, hold_seconds: 10.0 }
 
 # カメラからの心拍推定（rPPG）。stress の特徴源。numpy だけの軽い処理なので既定で有効。
 # 起動後 数秒ぶん貯まると各フレームに hr_bpm / rppg_quality が乗る。stress を使わない用途では

@@ -8,6 +8,15 @@
 そちらを優先し、無ければ HR に退避する。rPPG 無効／推定前で何も無いときは inactive
 （ストレスを none と断定しない）。キャリブ進行度は常時出る HR 基準の確立度で表す。
 
+基準と現在値には同じ統計量（中央値）を使う。基準を下位パーセンタイル、現在値を中央値に
+すると、心拍が変化していなくても推定のばらつきぶんだけ差が正に出て、安静のままストレスが
+上がる。さらに、その差はばらつき自体で割る。推定が暴れているときに大きな差が出ても、それは
+ストレスではなく測定の粗さなので、点にしてはいけない。
+
+安静の基準はこの cue 自身が持つ。直近 N 秒の履歴から取ると、負荷が N 秒より長く続いたとき
+基準が上がった値を追いかけてしまい、続いている間じゅう「差なし＝ストレスなし」になる。
+上振れしている間は基準の更新を止めることで、負荷が続いても検出し続けられる。
+
 測れていないときに 0（＝ストレスなし）を出すと嘘になるので、次の2つを守る:
 - 安静基準が未確立の間は判定を出さない。暫定の固定基準で判定すると、平常心拍が高い人は
   起動直後に必ずストレス高と出てしまう。
@@ -18,12 +27,21 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 
 import numpy as np
 
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
 from ._support import window_values
+
+
+def _mad(values: list[float]) -> float:
+    """中央絶対偏差。外れ値に強い散らばりの指標。標本が少なければ 0。"""
+    if len(values) < 3:
+        return 0.0
+    array = np.asarray(values, dtype=float)
+    return float(np.median(np.abs(array - np.median(array))))
 
 
 class HrElevationCue:
@@ -33,14 +51,14 @@ class HrElevationCue:
     def __init__(
         self,
         span_bpm: float = 25.0,
-        min_quality: float = 0.05,
+        min_quality: float = 0.5,
         sustained_seconds: float = 5.0,
         baseline_bpm: float = 70.0,
         adaptive_baseline: bool = True,
-        baseline_seconds: float = 45.0,
-        baseline_percentile: float = 25.0,
+        baseline_seconds: float = 120.0,
+        noise_k: float = 4.0,
+        freeze_at: float = 0.3,
         rmssd_span: float = 25.0,
-        rmssd_percentile: float = 75.0,
         hrv_min_samples: int = 4,
         require_calibration: bool = True,
         max_motion_deg: float = 6.0,
@@ -52,15 +70,16 @@ class HrElevationCue:
         self.baseline_bpm = baseline_bpm  # 履歴が浅いときの暫定基準
         self.adaptive_baseline = adaptive_baseline  # 本人の安静時を履歴から推定するか
         self.baseline_seconds = baseline_seconds  # 基準を測る履歴の長さ
-        self.baseline_percentile = baseline_percentile  # HR 基準に使う下側パーセンタイル
+        self.noise_k = noise_k  # 推定のばらつき(MAD)の何倍を満点の幅とみなすか
+        self.freeze_at = freeze_at  # このスコアを超えている間は基準を更新しない
         self.rmssd_span = rmssd_span  # HRV: baseline からの低下幅で満点
-        self.rmssd_percentile = rmssd_percentile  # HRV 基準に使う上側パーセンタイル（安静=高RMSSD）
         self.hrv_min_samples = hrv_min_samples  # 安静基準を作るのに要る HRV 標本数
         self.require_calibration = require_calibration  # 安静基準が確立するまで判定を出さない
         self.max_motion_deg = max_motion_deg  # 頭部のふらつきがこれを超えたら測定を止める
         self.hold_seconds = hold_seconds  # 測れない間、直前の値を保つ上限
         self._held = 0.0  # 直前に出せた値
         self._held_at: float | None = None  # その時刻
+        self._rest: deque[tuple[float, float]] = deque()  # 安静とみなした (時刻, 心拍)
 
     def evaluate(self, obs: Observation) -> CueResult:
         progress = self._progress(obs)
@@ -81,14 +100,32 @@ class HrElevationCue:
         if not recent:
             return self._hold(now, progress, "心拍なし")
 
-        baseline, ready = self._baseline(obs)
+        current = float(np.median([v for _, v in recent]))
+        baseline, spread, ready = self._baseline()
+        score = self._score(current - baseline, self.span_bpm, spread)
+        self._update_rest(now, current, ready, score)
         if self.require_calibration and not ready:
             detail = "安静基準を測定中"
             return CueResult(self.name, self.dimension, 0.0, False, detail, progress, False)
 
-        current = float(np.median([v for _, v in recent]))
-        score = clamp((current - baseline) / self.span_bpm) if self.span_bpm > 0 else 0.0
-        return self._emit(now, score, f"HR {current:.0f} base {baseline:.0f}", progress)
+        detail = f"HR {current:.0f} base {baseline:.0f} +-{spread:.0f}"
+        return self._emit(now, score, detail, progress)
+
+    def _update_rest(self, now: float, current: float, ready: bool, score: float) -> None:
+        # 上振れしている間は基準を更新しない。更新し続けると、上がった状態がそのまま新しい
+        # 「安静」になり、2分続く負荷を1分で見失う。基準が出来るまでは無条件に貯める。
+        if ready and score >= self.freeze_at:
+            return
+        self._rest.append((now, current))
+        cutoff = now - self.baseline_seconds
+        while self._rest and self._rest[0][0] < cutoff:
+            self._rest.popleft()
+
+    def _score(self, rise: float, span: float, spread: float) -> float:
+        # 満点までの幅は「決め打ちの幅」と「推定のばらつき」の大きい方。推定が暴れている
+        # ときほど大きな差を要求するので、ばらつきだけで点が入ることがない。
+        scale = max(span, self.noise_k * spread)
+        return clamp(rise / scale) if scale > 0 else 0.0
 
     def _emit(self, now: float, score: float, detail: str, progress: float | None) -> CueResult:
         self._held, self._held_at = score, now
@@ -122,9 +159,11 @@ class HrElevationCue:
         if not recent or self.rmssd_span <= 0:
             return None
         current = float(np.median([v for _, v in recent]))
-        baseline = float(np.percentile([v for _, v in samples], self.rmssd_percentile))
-        score = clamp((baseline - current) / self.rmssd_span)  # 安静より低RMSSD＝ストレス
-        return score, f"HRV {current:.0f}ms base {baseline:.0f}"
+        values = [v for _, v in samples]
+        baseline = float(np.median(values))  # 現在値と同じ統計量にする（偏りを作らない）
+        spread = _mad(values)
+        score = self._score(baseline - current, self.rmssd_span, spread)  # 低RMSSD＝ストレス
+        return score, f"HRV {current:.0f}ms base {baseline:.0f} +-{spread:.0f}"
 
     def _valid(
         self, obs: Observation, key: str, seconds: float, quality: float | None = None
@@ -141,23 +180,24 @@ class HrElevationCue:
             if not math.isnan(v) and q >= quality
         ]
 
+    def _required_span(self) -> float:
+        return 0.6 * self.baseline_seconds  # 基準を確定とみなすのに要る収録の長さ
+
     def _progress(self, obs: Observation) -> float | None:
         # 安静基準（HR）を確立するキャリブの進行度(0..1)。固定基準なら較正不要で None。
         if not self.adaptive_baseline:
             return None
-        samples = self._valid(obs, "hr_bpm", self.baseline_seconds, self.min_quality)
-        if len(samples) < 2:
+        if len(self._rest) < 2:
             return 0.0
-        covered = samples[-1][0] - samples[0][0]
-        required = 0.6 * self.baseline_seconds  # _baseline の確定条件と揃える
+        covered = self._rest[-1][0] - self._rest[0][0]
+        required = self._required_span()
         return clamp(covered / required) if required > 0 else 1.0
 
-    def _baseline(self, obs: Observation) -> tuple[float, bool]:
-        # 返り値は (基準bpm, 確定か)。確定＝本人の履歴から推定できた状態。
+    def _baseline(self) -> tuple[float, float, bool]:
+        # 返り値は (基準bpm, 推定のばらつき, 確定か)。確定＝本人の安静を十分な長さ見た状態。
         if not self.adaptive_baseline:
-            return self.baseline_bpm, True
-        samples = self._valid(obs, "hr_bpm", self.baseline_seconds, self.min_quality)
-        # 履歴が baseline_seconds の6割以上を覆っていれば、本人の下側心拍を基準にする。
-        if samples and (samples[-1][0] - samples[0][0]) >= 0.6 * self.baseline_seconds:
-            return float(np.percentile([v for _, v in samples], self.baseline_percentile)), True
-        return self.baseline_bpm, False
+            return self.baseline_bpm, 0.0, True
+        if self._rest and (self._rest[-1][0] - self._rest[0][0]) >= self._required_span():
+            values = [v for _, v in self._rest]
+            return float(np.median(values)), _mad(values), True
+        return self.baseline_bpm, 0.0, False

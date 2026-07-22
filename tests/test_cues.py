@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import numpy as np
 from _helpers import FakeHistory, make_observation
 
 from alertness.classifier.cues.attention_buffer import AttentionBufferCue
@@ -85,93 +86,130 @@ def test_attention_buffer_marks_invalid_without_face():
     assert not result.valid
 
 
+def _feed(cue, frames, step: int = 10):
+    """フレームを順に食わせる。cue が安静基準を自前で育てるので、最終フレームだけでは足りない。"""
+    result = None
+    for i in range(0, len(frames), step):
+        result = cue.evaluate(make_observation(frames[i], FakeHistory(frames[: i + 1])))
+    return result
+
+
+def _hr(bpm: float, seconds: float, t0: float = 0.0, quality: float = 0.7, **extra):
+    n = int(seconds * 10)
+    return [
+        Features({"hr_bpm": bpm, "rppg_quality": quality, **extra}, t0 + i * 0.1) for i in range(n)
+    ]
+
+
 def test_hr_elevation_active_when_hr_elevated():
     # 固定基準（adaptive_baseline=false）なら較正不要で、すぐ baseline_bpm=70 と比べる。
-    frames = [Features({"hr_bpm": 100.0, "rppg_quality": 0.5}, i * 0.1) for i in range(60)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
     cue = HrElevationCue(baseline_bpm=70.0, span_bpm=25.0, adaptive_baseline=False)
-    result = cue.evaluate(obs)
+    result = cue.evaluate(make_observation(_hr(100.0, 6.0)[-1], FakeHistory(_hr(100.0, 6.0))))
     assert result.active
     assert result.score >= 1.0
 
 
 def test_hr_elevation_silent_until_baseline_ready():
     # 安静基準が出来る前は、平常心拍が高い人でも「ストレス高」と出してはいけない。
-    frames = [Features({"hr_bpm": 100.0, "rppg_quality": 0.5}, i * 0.1) for i in range(60)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    result = HrElevationCue(baseline_bpm=70.0, span_bpm=25.0).evaluate(obs)
+    frames = _hr(100.0, 6.0)
+    result = HrElevationCue(baseline_bpm=70.0, span_bpm=25.0).evaluate(
+        make_observation(frames[-1], FakeHistory(frames))
+    )
     assert not result.active
     assert result.score == 0.0
     assert "測定中" in result.detail
 
 
+def test_hr_elevation_ignores_low_quality_estimates():
+    # 品質が閾値未満の推定は基準にも現在値にも使わない（誤差が span と同じ桁になるため）。
+    frames = _hr(100.0, 200.0, quality=0.2)
+    result = HrElevationCue().evaluate(make_observation(frames[-1], FakeHistory(frames)))
+    assert not result.valid
+    assert result.score == 0.0
+
+
+def test_hr_elevation_stays_quiet_through_noisy_rest():
+    # 心拍が変化していないのに推定だけが暴れている状態。ストレスを出してはいけない。
+    rng = np.random.default_rng(0)
+    frames = [
+        Features({"hr_bpm": 72.0 + float(rng.normal(0, 15.0)), "rppg_quality": 0.7}, i * 0.1)
+        for i in range(2000)
+    ]
+    cue = HrElevationCue(baseline_seconds=60.0)
+    scores = []
+    for i in range(0, len(frames), 10):
+        result = cue.evaluate(make_observation(frames[i], FakeHistory(frames[: i + 1])))
+        if frames[i].timestamp > 50.0:
+            scores.append(result.score)
+    assert max(scores) < 0.6  # ばらつきだけで警告レベルに乗らない
+
+
+def test_hr_elevation_holds_baseline_through_long_elevation():
+    # 上振れが基準の窓より長く続いても、基準が追いかけて見失わないこと。
+    calm = _hr(70.0, 100.0)
+    spike = _hr(100.0, 120.0, t0=100.0)  # 基準の窓(60秒)より長い上昇
+    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=60.0)
+    result = _feed(cue, calm + spike)
+    assert result.active
+    assert result.score >= 0.8
+
+
 def test_hr_elevation_holds_value_while_head_moves():
     # 基準確立後に高ストレスを出し、その直後に頭が動くと 0 に落とさず値を保つ。
-    steady = {"hr_bpm": 70.0, "rppg_quality": 0.5, "yaw": 0.0}
-    calm = [Features(steady, i * 0.1) for i in range(500)]
-    spike = [
-        Features({"hr_bpm": 100.0, "rppg_quality": 0.5, "yaw": 0.0}, 50.0 + i * 0.1)
-        for i in range(60)
-    ]
-    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=45.0)
-    frames = calm + spike
-    assert cue.evaluate(make_observation(frames[-1], FakeHistory(frames))).score >= 1.0
+    calm = _hr(70.0, 100.0, yaw=0.0)
+    spike = _hr(100.0, 10.0, t0=100.0, yaw=0.0)
+    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=60.0)
+    assert _feed(cue, calm + spike).score >= 0.8
 
     moving = [
-        Features({"hr_bpm": 100.0, "rppg_quality": 0.5, "yaw": 30.0 * (-1) ** i}, 56.0 + i * 0.1)
+        Features({"hr_bpm": 100.0, "rppg_quality": 0.7, "yaw": 30.0 * (-1) ** i}, 110.0 + i * 0.1)
         for i in range(30)
     ]
-    frames = calm + spike + moving
-    result = cue.evaluate(make_observation(frames[-1], FakeHistory(frames)))
+    result = _feed(cue, calm + spike + moving, step=1)
     assert not result.active  # 保持中は根拠として数えない
-    assert result.score >= 1.0  # それでも直前の値は保つ
+    assert result.score >= 0.8  # それでも直前の値は保つ
     assert "頭部が動いている" in result.detail
 
 
 def test_hr_elevation_adaptive_baseline_ignores_steady_high_hr():
     # 長時間ずっと同じ高さ（安静が高心拍の人）だと、本人基準に対して上がっていない＝none。
-    frames = [Features({"hr_bpm": 95.0, "rppg_quality": 0.5}, i * 0.1) for i in range(600)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=45.0)
-    assert not cue.evaluate(obs).active
+    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=60.0)
+    assert not _feed(cue, _hr(95.0, 120.0)).active
 
 
 def test_hr_elevation_adaptive_detects_rise_over_resting():
     # 安静(70)がしばらく続いた後に上昇(100)すると、本人基準からの上振れを拾う。
-    calm = [Features({"hr_bpm": 70.0, "rppg_quality": 0.5}, i * 0.1) for i in range(500)]
-    spike = [Features({"hr_bpm": 100.0, "rppg_quality": 0.5}, 50.0 + i * 0.1) for i in range(60)]
-    frames = calm + spike
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=45.0)
-    assert cue.evaluate(obs).active
+    cue = HrElevationCue(span_bpm=25.0, baseline_seconds=60.0)
+    assert _feed(cue, _hr(70.0, 100.0) + _hr(100.0, 10.0, t0=100.0)).active
 
 
 def test_hr_elevation_inactive_without_rppg():
     # hr_bpm が無い（rPPG無効）と、ストレスを断定しない。
     frames = [Features({"ear": 0.3}, i * 0.1) for i in range(60)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    result = HrElevationCue().evaluate(obs)
+    result = HrElevationCue().evaluate(make_observation(frames[-1], FakeHistory(frames)))
     assert not result.active
     assert result.score == 0.0
 
 
 def test_hr_elevation_uses_hrv_when_available():
-    # HRV(RMSSD)が本人基準(高RMSSD)より下がると、HRV経由でストレスを出す。
-    calm = [Features({"hrv_rmssd": 60.0, "rppg_quality": 0.4}, i * 0.1) for i in range(500)]
+    # HRV(RMSSD)が本人基準より下がると、HRV経由でストレスを出す。
+    calm = [Features({"hrv_rmssd": 60.0, "rppg_quality": 0.7}, i * 0.1) for i in range(500)]
     stressed = [
-        Features({"hrv_rmssd": 25.0, "rppg_quality": 0.4}, 50.0 + i * 0.1) for i in range(60)
+        Features({"hrv_rmssd": 20.0, "rppg_quality": 0.7}, 50.0 + i * 0.1) for i in range(60)
     ]
     frames = calm + stressed
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    result = HrElevationCue(rmssd_span=25.0).evaluate(obs)
+    result = HrElevationCue(rmssd_span=25.0).evaluate(
+        make_observation(frames[-1], FakeHistory(frames))
+    )
     assert result.detail.startswith("HRV")
     assert result.active
 
 
 def test_hr_elevation_falls_back_to_hr_without_hrv():
     # HRV 標本が無ければ HR に退避する。
-    frames = [Features({"hr_bpm": 100.0, "rppg_quality": 0.4}, i * 0.1) for i in range(60)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    result = HrElevationCue(baseline_bpm=70.0, adaptive_baseline=False).evaluate(obs)
+    frames = _hr(100.0, 6.0)
+    result = HrElevationCue(baseline_bpm=70.0, adaptive_baseline=False).evaluate(
+        make_observation(frames[-1], FakeHistory(frames))
+    )
     assert result.detail.startswith("HR ")  # HRV ではなく HR 経由
     assert result.active
