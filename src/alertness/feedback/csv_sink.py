@@ -34,6 +34,18 @@ FEATURE_COLUMNS = (
     "jawOpen",
     "eyeBlinkLeft",
     "eyeBlinkRight",
+    # FACS の AU に対応する blendshape（AU4/AU7/AU24/AU15/AU6）。判定にも学習にも使う。
+    "browDownLeft",
+    "browDownRight",
+    "browInnerUp",
+    "eyeSquintLeft",
+    "eyeSquintRight",
+    "mouthPressLeft",
+    "mouthPressRight",
+    "mouthFrownLeft",
+    "mouthFrownRight",
+    "cheekSquintLeft",
+    "cheekSquintRight",
     "hr_bpm",  # rPPG 由来（無効時は空）。stress モデルの特徴になり得る。
     "rppg_quality",
     "hrv_rmssd",  # rPPG 由来。良質な窓でだけ入る（機会的）ので欠けるのが普通。

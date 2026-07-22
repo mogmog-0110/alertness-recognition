@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from ..contracts import Level
 
 ALERT_ON = ("high", "low")
+COMBINE = ("max", "weighted")
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,9 @@ class DimensionSpec:
     cues: tuple[str, ...]  # この軸に効く cue 名
     alert_on: str = "high"  # high=スコアが高いほど警告 / low=低いほど警告（集中など）
     alert_name: str = ""  # 警告としての表示名。空なら name
+    # max = 強い手がかりが1つあれば立てる（眠気のように、単独で決定的な兆候がある軸）
+    # weighted = 重み付き平均だけを見る（複数の手がかりの一致を要求する軸）
+    combine: str = "max"
 
     @property
     def inverted(self) -> bool:

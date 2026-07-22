@@ -57,6 +57,9 @@ class RuleBasedPolicy:
         total_w = sum(self._weights.get(n, 1.0) for n in spec.cues) or 1.0
         alarms = [(r, alarm_of(spec, r.score)) for r in results]
         weighted = sum(self._weights.get(r.name, 1.0) * a for r, a in alarms) / total_w
+        if spec.combine == "weighted":
+            # 手がかりの一致を要求する軸。単独で強く出ても、他が黙っていれば伸びない。
+            return clamp(weighted)
         strongest = max((a for r, a in alarms if r.active), default=0.0)
         return clamp(max(weighted, strongest))
 

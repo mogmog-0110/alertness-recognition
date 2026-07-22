@@ -13,13 +13,14 @@ from .classifier.classifier import CueClassifier
 from .classifier.cues.attention_buffer import AttentionBufferCue
 from .classifier.cues.blink import BlinkCue
 from .classifier.cues.eye_closure import EyeClosureCue
+from .classifier.cues.facial_tension import FacialTensionCue
 from .classifier.cues.gaze_off import GazeOffCue
 from .classifier.cues.head_down import HeadDownCue
 from .classifier.cues.head_turn import HeadTurnCue
 from .classifier.cues.hr_elevation import HrElevationCue
 from .classifier.cues.yawn import YawnCue
 from .classifier.policies.rule_based import RuleBasedPolicy
-from .classifier.states import ALERT_ON, DimensionSpec
+from .classifier.states import ALERT_ON, COMBINE, DimensionSpec
 from .features.extractor import FaceFeatureExtractor
 from .labeling import LabelState
 from .pipeline import Pipeline
@@ -36,6 +37,7 @@ _CUE_REGISTRY = {
     "gaze_off": GazeOffCue,
     "attention_buffer": AttentionBufferCue,
     "hr_elevation": HrElevationCue,
+    "facial_tension": FacialTensionCue,
 }
 
 
@@ -82,6 +84,9 @@ def _dimension_specs(config: dict[str, Any]) -> list[DimensionSpec]:
         alert_on = str(dim.get("alert_on", "high"))
         if alert_on not in ALERT_ON:
             raise ValueError(f"{dim['name']}: alert_on は {'/'.join(ALERT_ON)} のいずれか。")
+        combine = str(dim.get("combine", "max"))
+        if combine not in COMBINE:
+            raise ValueError(f"{dim['name']}: combine は {'/'.join(COMBINE)} のいずれか。")
         specs.append(
             DimensionSpec(
                 dim["name"],
@@ -89,6 +94,7 @@ def _dimension_specs(config: dict[str, Any]) -> list[DimensionSpec]:
                 tuple(dim.get("cues", [])),
                 alert_on,
                 str(dim.get("alert_name", "")),
+                combine,
             )
         )
     return specs

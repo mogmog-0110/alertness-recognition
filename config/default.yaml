@@ -53,9 +53,12 @@ assessment:
       cues: [attention_buffer]
       alert_on: low           # 集中しているときではなく、していないときに警告する
       alert_name: inattentive
-    - name: stress            # ストレス・苛立ち（rPPG の心拍上昇で rule 判定。ML でも学習可）
+    - name: stress            # ストレス・苛立ち（心拍と表情の一致で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: [hr_elevation]    # hr_elevation は rppg.enabled=true のときだけ効く
+      cues: [hr_elevation, facial_tension]
+      # 心拍も表情も単独では特異度が低い（心拍は体動でも上がり、表情は照明や集中でも動く）。
+      # weighted にして両者の一致を要求する。max だと片方だけで警告まで届いてしまう。
+      combine: weighted
 
 # 特徴ごとの判定器（cue）。重みと個別パラメータを持つ。
 # パラメータ名は各 cue クラスの引数と一致させること。
@@ -74,6 +77,10 @@ cues:
   # 顔が少し傾いていると以降ずっと十数度ずれる。主たる判定は視線(gaze_on_threshold)に置き、
   # 頭部は「明らかに横を向いた」を弾く役に留める。ずれを感じたら 'c' で再キャリブできる。
   attention_buffer: { weight: 1.0, capacity_seconds: 2.0, latency_seconds: 0.1, gaze_on_threshold: 0.035, on_target_yaw_deg: 25, refill_rate: 1.0 }
+  # ストレス(表情): 眉を寄せ(AU4)・まぶたを緊張させ(AU7)・唇を押しつける(AU24)動きの強さ。
+  # 皺眉筋の活動は負の感情価と認知的努力の指標として長く検証されてきた。個人差が大きく
+  # 向きも一様でないので、本人の安静との差だけを見て、単独では警告を立てない。
+  facial_tension: { weight: 1.0, span: 0.15, sustained_seconds: 5.0, baseline_seconds: 120, min_rest_samples: 30, rest_interval: 1.0, freeze_at: 0.3, noise_k: 6.0 }
   # ストレス: rPPG の心拍が「本人の安静時」から上がると満点。基準も現在値も中央値で取る
   # （統計量を揃えないと、変化が無くても推定のばらつきぶん差が正に出る）。満点までの幅は
   # span_bpm と「ばらつき(MAD)×noise_k」の大きい方で、推定が粗いときほど大きな差を要求する。

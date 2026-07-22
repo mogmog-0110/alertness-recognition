@@ -243,12 +243,12 @@ def test_hr_elevation_baseline_survives_a_long_freeze():
     # 消えると再開直後の数点で新しい基準ができ、そこに測り損ねた値が混ざると崩壊する。
     cue = HrElevationCue(span_bpm=10.0, baseline_seconds=60.0)
     _feed(cue, _hr(62.0, 100.0))
-    base_before, _, ready = cue._baseline()
+    base_before, _, ready = cue._read_baseline()
     assert ready
 
     # 基準の窓(60秒)より長く上振れが続く
     _feed(cue, _hr(62.0, 100.0) + _hr(75.0, 120.0, t0=100.0))
-    base_after, _, ready = cue._baseline()
+    base_after, _, ready = cue._read_baseline()
     assert ready
     assert abs(base_after - base_before) < 3.0  # 基準は安静のまま
 
@@ -257,4 +257,4 @@ def test_hr_elevation_rest_samples_are_time_spaced():
     # 毎フレーム積むと直近の1点が重複して基準を乗っ取る。間隔を空けて積むこと。
     cue = HrElevationCue(baseline_seconds=60.0, rest_interval=1.0)
     _feed(cue, _hr(62.0, 60.0), step=1)  # 0.1秒刻みで600フレーム
-    assert len(cue._rest) <= 65  # 1秒間隔なら60件前後。重複していれば600件になる
+    assert len(cue._rest._samples) <= 65  # 1秒間隔なら60件前後。重複していれば600件になる

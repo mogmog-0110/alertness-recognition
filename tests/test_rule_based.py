@@ -88,3 +88,41 @@ def test_contributing_lists_active_cues_only():
     ]
     result = policy.decide(_obs(), cues)
     assert result.dimensions["drowsiness"].contributing == ("eye_closure",)
+
+
+def test_weighted_combination_requires_agreement():
+    # combine=weighted の軸は、片方の cue だけが強く出ても警告まで届かない。
+    spec = DimensionSpec("stress", LEVELS, ("hr_elevation", "facial_tension"), combine="weighted")
+    policy = _policy([spec], {"hr_elevation": 1.0, "facial_tension": 1.0})
+
+    alone = policy.decide(
+        _obs(),
+        [
+            CueResult("hr_elevation", "stress", 1.0, True, ""),
+            CueResult("facial_tension", "stress", 0.0, False, ""),
+        ],
+    )
+    assert alone.dimensions["stress"].level < Level.MEDIUM  # 心拍だけでは立たない
+
+    both = policy.decide(
+        _obs(),
+        [
+            CueResult("hr_elevation", "stress", 0.9, True, ""),
+            CueResult("facial_tension", "stress", 0.8, False, ""),
+        ],
+    )
+    assert both.dimensions["stress"].level >= Level.MEDIUM  # 揃えば立つ
+
+
+def test_max_combination_still_fires_on_a_single_strong_cue():
+    # 眠気のように単独で決定的な兆候がある軸は、これまでどおり max。
+    spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure", "blink"))
+    policy = _policy([spec], {"eye_closure": 1.0, "blink": 1.0})
+    result = policy.decide(
+        _obs(),
+        [
+            CueResult("eye_closure", "drowsiness", 1.0, True, ""),
+            CueResult("blink", "drowsiness", 0.0, False, ""),
+        ],
+    )
+    assert result.dimensions["drowsiness"].level == Level.HIGH
