@@ -148,6 +148,7 @@ class CueResult:
     active: bool  # 自分の閾値を超えたか
     detail: str = ""  # 画面表示・根拠用の短い説明
     progress: float | None = None  # 準備/キャリブの進行度(0..1)。持たない cue は None
+    valid: bool = True  # いま実際に計測できているか。False なら score は当てにならない
 
 
 @dataclass(frozen=True)

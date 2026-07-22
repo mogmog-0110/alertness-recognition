@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from _helpers import FakeHistory, make_observation
 
-from alertness.classifier.cues.attention_hold import AttentionHoldCue
+from alertness.classifier.cues.attention_buffer import AttentionBufferCue
 from alertness.classifier.cues.eye_closure import EyeClosureCue
 from alertness.classifier.cues.gaze_off import GazeOffCue
 from alertness.classifier.cues.hr_elevation import HrElevationCue
@@ -41,30 +41,48 @@ def test_gaze_off_active_when_sustained():
     assert cue.evaluate(obs).active
 
 
-def test_attention_hold_active_when_gaze_and_head_steady():
-    frames = [Features({"gaze_off": 0.01, "yaw_rel": 2.0}, i * 0.1) for i in range(50)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    cue = AttentionHoldCue(gaze_on_threshold=0.035, steady_yaw_deg=12.0, sustained_seconds=3.0)
-    result = cue.evaluate(obs)
+def _frames(gaze: float, yaw: float, n: int, t0: float = 0.0):
+    return [Features({"gaze_off": gaze, "yaw_rel": yaw}, t0 + i * 0.1) for i in range(n)]
+
+
+def test_attention_buffer_stays_full_while_on_target():
+    cue = AttentionBufferCue(capacity_seconds=2.0)
+    frames = _frames(0.01, 2.0, 50)
+    for i in range(len(frames)):
+        result = cue.evaluate(make_observation(frames[i], FakeHistory(frames[: i + 1])))
+    assert result.score >= 1.0
+    assert not result.active  # 残高があるので警告側には立たない
+
+
+def test_attention_buffer_empties_when_looking_away():
+    cue = AttentionBufferCue(capacity_seconds=2.0, latency_seconds=0.1)
+    frames = _frames(0.30, 40.0, 40)  # 4秒よそ見（容量2秒＋猶予を超える）
+    for i in range(len(frames)):
+        result = cue.evaluate(make_observation(frames[i], FakeHistory(frames[: i + 1])))
+    assert result.score == 0.0
     assert result.active
-    assert result.score >= 1.0
 
 
-def test_attention_hold_does_not_read_short_history_as_no_focus():
-    # 起動直後（履歴 0.5 秒）でもずっと注視していれば低スコアにしない。集中は低いほど警告
-    # する軸なので、履歴不足を「集中していない」と読むと必ず誤警告になる。
-    frames = [Features({"gaze_off": 0.01, "yaw_rel": 2.0}, i * 0.1) for i in range(5)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    cue = AttentionHoldCue(sustained_seconds=3.0)
-    result = cue.evaluate(obs)
-    assert result.score >= 1.0
-    assert not result.active  # 3秒には届いていないので「集中と断定」はしない
+def test_attention_buffer_accumulates_across_repeated_glances():
+    # 短いよそ見と復帰を繰り返す（視覚的時分割）。連続時間を数える方式では毎回満点に戻るが、
+    # バッファ方式は戻りきらずに減っていく。ここが AttenD を選んだ理由。
+    cue = AttentionBufferCue(capacity_seconds=2.0, latency_seconds=0.1, refill_rate=0.5)
+    frames = []
+    t = 0.0
+    for _ in range(6):
+        frames += _frames(0.30, 40.0, 8, t)  # 0.8秒よそ見
+        t += 0.8
+        frames += _frames(0.01, 2.0, 3, t)  # 0.3秒だけ戻る
+        t += 0.3
+    for i in range(len(frames)):
+        result = cue.evaluate(make_observation(frames[i], FakeHistory(frames[: i + 1])))
+    assert result.score < 0.5  # 直前に対象を見ていても残高は戻っていない
 
 
-def test_attention_hold_inactive_when_looking_away():
-    frames = [Features({"gaze_off": 0.2, "yaw_rel": 30.0}, i * 0.1) for i in range(50)]
-    obs = make_observation(frames[-1], FakeHistory(frames))
-    assert not AttentionHoldCue().evaluate(obs).active
+def test_attention_buffer_marks_invalid_without_face():
+    cue = AttentionBufferCue()
+    result = cue.evaluate(make_observation(Features({}, 0.0, face_present=False)))
+    assert not result.valid
 
 
 def test_hr_elevation_active_when_hr_elevated():

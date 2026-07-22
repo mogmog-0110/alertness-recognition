@@ -44,9 +44,9 @@ assessment:
       cues: [head_turn, gaze_off]
     - name: concentration     # 集中（視線・頭部の注視保持で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: [attention_hold]
+      cues: [attention_buffer]
       alert_on: low           # 集中しているときではなく、していないときに警告する
-      alert_name: low_concentration
+      alert_name: inattentive
     - name: stress            # ストレス・苛立ち（rPPG の心拍上昇で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [hr_elevation]    # hr_elevation は rppg.enabled=true のときだけ効く
@@ -62,8 +62,9 @@ cues:
   head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5 }
   head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5 }
   gaze_off:    { weight: 0.6, off_threshold: 0.035, off_screen_seconds: 2.0 }
-  # 集中: 視線が載り頭部が安定した状態が sustained_seconds 続けば満点。
-  attention_hold: { weight: 1.0, gaze_on_threshold: 0.035, steady_yaw_deg: 12, sustained_seconds: 3.0 }
+  # 集中: AttenD 方式の注意バッファ。対象を見ている間は残高が満ち、外れている間は減る。
+  # capacity_seconds=2 は「前方から2秒視線を外すと車線内の位置把握が崩れる」という根拠から。
+  attention_buffer: { weight: 1.0, capacity_seconds: 2.0, latency_seconds: 0.1, gaze_on_threshold: 0.035, on_target_yaw_deg: 12, refill_rate: 1.0 }
   # ストレス: rPPG の心拍が「本人の安静時」から span 上がると満点。
   # adaptive_baseline=true で履歴から安静時を推定する。その基準が出来上がるまでは判定を出さない
   # （require_calibration）。頭が max_motion_deg より振れている間は rPPG が当てにならないので
@@ -91,15 +92,17 @@ feedback:
   window: true                # OpenCV ウィンドウに表示
   draw_landmarks: true
   face_mesh: false            # true にすると顔全体のメッシュ（網目）を描く
-  stress_meter: true          # 右上にストレスの安静基準キャリブの進行度バーを表示
-  rppg_view: true             # 左下に額の切り出し＋脈波（微小な色変化）を可視化（開発用）
+  stress_meter: true          # 右上にストレスの安静基準キャリブの進行度バーを表示。
+                              # 額の測定範囲もストレス段階の色で塗る
+  timeline: stress            # 左下に推移の帯を出す軸名。空なら出さない
+  timeline_seconds: 300       # 帯に収める時間（秒）
   debug: true                 # 画面右下に全特徴量を数値表示。しきい値調整時に使う
   alert_cooldown_seconds: 5.0
   audio: true                 # やわらかいチャイムで警告（Windows）
   sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted）
     drowsiness: drowsy
     distraction: distracted
-    concentration: distracted # 集中していないときに鳴る（alert_on: low のため）
+    concentration: distracted # 注意が外れたときに鳴る（alert_on: low のため）
 
 # 学習データの録画。--record で有効化すると各フレームの特徴量＋判定をCSVに残す。
 recorder:

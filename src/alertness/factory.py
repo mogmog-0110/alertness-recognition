@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from .classifier.classifier import CueClassifier
-from .classifier.cues.attention_hold import AttentionHoldCue
+from .classifier.cues.attention_buffer import AttentionBufferCue
 from .classifier.cues.blink import BlinkCue
 from .classifier.cues.eye_closure import EyeClosureCue
 from .classifier.cues.gaze_off import GazeOffCue
@@ -34,7 +34,7 @@ _CUE_REGISTRY = {
     "head_down": HeadDownCue,
     "head_turn": HeadTurnCue,
     "gaze_off": GazeOffCue,
-    "attention_hold": AttentionHoldCue,
+    "attention_buffer": AttentionBufferCue,
     "hr_elevation": HrElevationCue,
 }
 
@@ -191,8 +191,8 @@ def build_sinks(
                 labels if recording else None,
                 feedback.get("face_mesh", False),
                 feedback.get("stress_meter", False),
-                feedback.get("rppg_view", False),
-                config.get("camera", {}).get("target_fps", 30),
+                feedback.get("timeline", ""),
+                feedback.get("timeline_seconds", 300.0),
             )
         )
     if recording:

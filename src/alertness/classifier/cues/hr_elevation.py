@@ -67,7 +67,7 @@ class HrElevationCue:
         now = obs.features.timestamp
         if not obs.features.face_present:
             self._held, self._held_at = 0.0, None  # 離席したら保持をやめる
-            return CueResult(self.name, self.dimension, 0.0, False, "顔なし", progress)
+            return CueResult(self.name, self.dimension, 0.0, False, "顔なし", progress, False)
 
         if self._moving(obs):
             return self._hold(now, progress, "頭部が動いている")
@@ -83,7 +83,8 @@ class HrElevationCue:
 
         baseline, ready = self._baseline(obs)
         if self.require_calibration and not ready:
-            return CueResult(self.name, self.dimension, 0.0, False, "安静基準を測定中", progress)
+            detail = "安静基準を測定中"
+            return CueResult(self.name, self.dimension, 0.0, False, detail, progress, False)
 
         current = float(np.median([v for _, v in recent]))
         score = clamp((current - baseline) / self.span_bpm) if self.span_bpm > 0 else 0.0
@@ -96,9 +97,9 @@ class HrElevationCue:
     def _hold(self, now: float, progress: float | None, reason: str) -> CueResult:
         # 測れない間は直前の値を保つ。保持中は active にしない（根拠として数えない）。
         if self._held_at is None or now - self._held_at > self.hold_seconds:
-            return CueResult(self.name, self.dimension, 0.0, False, reason, progress)
+            return CueResult(self.name, self.dimension, 0.0, False, reason, progress, False)
         detail = f"{reason}（保持）"
-        return CueResult(self.name, self.dimension, self._held, False, detail, progress)
+        return CueResult(self.name, self.dimension, self._held, False, detail, progress, False)
 
     def _moving(self, obs: Observation) -> bool:
         # 頭部の振れ幅で動きを見る。動いている間の額の色変化は脈より動きの影響が大きい。

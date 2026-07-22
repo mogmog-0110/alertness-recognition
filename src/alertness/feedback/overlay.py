@@ -73,7 +73,7 @@ def render(
     _draw_panel(img, assessment)
     if stress_meter:
         if obs.landmarks.detected:
-            _draw_rppg_roi(img, obs.landmarks)  # ストレス＝額のどこを測っているか
+            _draw_rppg_roi(img, obs.landmarks, assessment)  # ストレス＝額のどこを測っているか
         _draw_stress_meter(img, obs, assessment)
     if assessment.alert_level() >= Level.MEDIUM:
         _draw_alert(img)
@@ -141,15 +141,27 @@ def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
         y += step
 
 
-def _draw_rppg_roi(img: np.ndarray, lm: FaceLandmarks) -> None:
-    # rPPG が心拍を測る額の矩形を描く。ここが顔から外れていると HR が取れない。
+def _draw_rppg_roi(img: np.ndarray, lm: FaceLandmarks, assessment: Assessment) -> None:
+    # 額のどこで心拍を測っているかを、いまのストレス段階の色で塗る。
+    # 面の中に色の分布は作らない。rPPG は額全体の平均しか見ておらず、場所ごとの差は
+    # 持っていないので、濃淡を付けると無い解像度があるように見えてしまう。
     h, w = img.shape[:2]
     box = forehead_roi_box(lm, w, h)
     if box is None:
         return
     x0, y0, x1, y1 = box
-    cv2.rectangle(img, (x0, y0), (x1, y1), (0, 255, 255), 1)
-    _text(img, "rPPG", (x0, max(12, y0 - 4)), 0.4, (0, 255, 255))
+    dim = assessment.dimensions.get("stress")
+    cue = next((c for c in assessment.cues if c.dimension == "stress"), None)
+    measuring = cue is None or cue.valid
+    color = _COLORS[dim.level] if (dim is not None and measuring) else (150, 150, 150)
+
+    roi = img[y0:y1, x0:x1]
+    if roi.size:
+        tint = np.full(roi.shape, color, dtype=np.uint8)
+        img[y0:y1, x0:x1] = cv2.addWeighted(roi, 0.65, tint, 0.35, 0)
+    cv2.rectangle(img, (x0, y0), (x1, y1), color, 1)
+    label = "stress" if measuring else "stress (measuring)"
+    _text(img, label, (x0, max(12, y0 - 4)), 0.4, color)
 
 
 def _draw_stress_meter(img: np.ndarray, obs: Observation, assessment: Assessment) -> None:
