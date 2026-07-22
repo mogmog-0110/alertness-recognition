@@ -49,7 +49,12 @@ def estimate_hr(
 ) -> tuple[float, float]:
     """脈波と標本化周波数[Hz] → (心拍[bpm], 品質0..1)。
 
-    品質は帯域内でピークがどれだけ突出しているか（ピーク電力 / 帯域電力）。低いほど信用しない。
+    FFT のビン幅は fs/N で決まり、10秒窓・30fps だと 6 bpm もある。そのままビンの中心を
+    返すと心拍が 6 bpm 刻みでしか出ず、安静時からの上振れ（span 25 bpm）を測るには粗すぎる。
+    ピーク周辺3点に放物線を当てて、ビンの間を補間する。
+
+    品質は帯域内でピークがどれだけ突出しているか。窓関数でピークは3ビンに広がるので、
+    ピーク±1ビンの電力を帯域全体と比べる。低いほど信用しない。
     帯域内に成分が無い・標本が足りない場合は (nan, 0)。
     """
     x = np.asarray(signal, dtype=float).ravel()
@@ -67,9 +72,29 @@ def estimate_hr(
     band_power = power[band]
     band_freqs = freqs[band]
     peak = int(np.argmax(band_power))
-    hr = float(band_freqs[peak] * 60.0)
-    quality = float(band_power[peak] / np.sum(band_power))
+
+    spacing = float(freqs[1] - freqs[0]) if freqs.size > 1 else 0.0
+    hr = float((band_freqs[peak] + _parabolic_offset(band_power, peak) * spacing) * 60.0)
+    hr = min(max(hr, min_bpm), max_bpm)
+
+    lo, hi = max(0, peak - 1), min(band_power.size, peak + 2)
+    quality = float(np.sum(band_power[lo:hi]) / np.sum(band_power))
     return hr, quality
+
+
+def _parabolic_offset(power: np.ndarray, peak: int) -> float:
+    """ピーク前後3点に放物線を当て、頂点のビンからのずれ(-0.5..0.5)を返す。
+
+    対数電力で当てるのが定石（窓関数のピーク形状が対数側で放物線に近いため）。
+    端にあるときや形が凹んでいるときは補間しない。
+    """
+    if peak <= 0 or peak >= power.size - 1:
+        return 0.0
+    y0, y1, y2 = (math.log(max(float(v), 1e-30)) for v in power[peak - 1 : peak + 2])
+    denom = y0 - 2.0 * y1 + y2
+    if denom >= -1e-12:  # 上に凸でなければ頂点が定まらない
+        return 0.0
+    return max(-0.5, min(0.5, 0.5 * (y0 - y2) / denom))
 
 
 def forehead_roi_box(
@@ -123,6 +148,7 @@ class RppgEstimator:
         max_bpm: float = 180.0,
         hrv_min_quality: float = 0.25,
         hrv_min_beats: int = 8,
+        hrv_enabled: bool = False,
     ) -> None:
         self._fps = fps
         self._min_bpm = min_bpm
@@ -130,7 +156,11 @@ class RppgEstimator:
         self._maxlen = max(2, int(window_seconds * fps))
         # 推定を始める前に、窓の半分ぶんは貯める（短すぎる窓は当てにならない）。
         self._min_samples = max(8, self._maxlen // 2)
-        # HRV は機会的：品質が高く窓が満杯のときだけ出す（拍の精度が要るため）。
+        # HRV は既定で無効。拍の時刻がフレーム間隔（30fpsで33ms）に量子化されるため、
+        # 完全に規則正しい脈を入れても RMSSD が 25ms 程度出てしまう。人の安静時 RMSSD が
+        # 20〜50ms なので、量子化雑音だけで測りたい範囲を覆ってしまい、値が心臓ではなく
+        # フレーム格子を映す。高フレームレート化か拍位置の補間を入れるまで出さない。
+        self._hrv_enabled = hrv_enabled
         self._hrv_min_quality = hrv_min_quality
         self._hrv_min_beats = hrv_min_beats
         self._buf: deque[tuple[float, np.ndarray]] = deque(maxlen=self._maxlen)
@@ -162,6 +192,8 @@ class RppgEstimator:
 
     def _hrv(self, pulse: np.ndarray, fs: float, quality: float) -> float | None:
         # 品質が高く窓が満杯（＝安定して長い）ときだけ HRV(RMSSD) を返す。それ以外は None。
+        if not self._hrv_enabled:
+            return None
         if quality < self._hrv_min_quality or len(self._buf) < self._maxlen:
             return None
         peaks = detect_peaks(pulse, fs, self._min_bpm, self._max_bpm)

@@ -92,7 +92,7 @@ def test_forehead_roi_box_none_when_eyes_coincide():
 def test_augment_emits_hrv_in_clean_full_window():
     # 品質が高く窓が満杯なら HRV(RMSSD) が特徴に乗る。
     fs, size = 30.0, 64
-    est = RppgEstimator(fps=fs, window_seconds=12.0, hrv_min_quality=0.05)
+    est = RppgEstimator(fps=fs, window_seconds=12.0, hrv_min_quality=0.05, hrv_enabled=True)
     landmarks = _landmarks_with_eyes(size)
     rgb = _synthetic_rgb(72.0, fs, 12.0)  # 12秒＝窓満杯、14拍ほど
 
@@ -111,7 +111,7 @@ def test_augment_emits_hrv_in_clean_full_window():
 def test_augment_no_hrv_before_full_window():
     # 窓が満杯になる前は HRV を出さない（拍精度が要るため）。
     fs, size = 30.0, 64
-    est = RppgEstimator(fps=fs, window_seconds=12.0, hrv_min_quality=0.05)
+    est = RppgEstimator(fps=fs, window_seconds=12.0, hrv_min_quality=0.05, hrv_enabled=True)
     landmarks = _landmarks_with_eyes(size)
     rgb = _synthetic_rgb(72.0, fs, 7.0)  # 窓(12s)未満
 
@@ -133,3 +133,22 @@ def test_augment_noop_when_face_absent():
     features = Features({"ear": 0.3}, 0.0)
     out = est.augment(frame, landmarks, features)
     assert out is features  # 検出なしなら素通し
+
+
+def test_estimate_hr_resolves_between_fft_bins():
+    # FFT のビン幅は 10秒窓・30fps で 6bpm。補間なしだと 6bpm 刻みでしか出ない。
+    fs, seconds = 30.0, 10.0
+    samples = np.arange(int(fs * seconds)) / fs
+    for true_bpm in (68.0, 70.0, 74.0, 76.0):
+        signal = np.sin(2 * np.pi * true_bpm / 60.0 * samples)
+        hr, quality = estimate_hr(signal, fs)
+        assert abs(hr - true_bpm) < 1.0, f"{true_bpm} -> {hr}"
+        assert quality > 0.9  # 純音なので帯域電力のほとんどがピーク周辺に集まる
+
+
+def test_estimate_hr_stays_inside_band():
+    fs = 30.0
+    samples = np.arange(300) / fs
+    signal = np.sin(2 * np.pi * 0.7 * samples)
+    hr, _ = estimate_hr(signal, fs, min_bpm=50.0, max_bpm=60.0)
+    assert 50.0 <= hr <= 60.0
