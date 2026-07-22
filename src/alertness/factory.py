@@ -19,7 +19,7 @@ from .classifier.cues.head_turn import HeadTurnCue
 from .classifier.cues.hr_elevation import HrElevationCue
 from .classifier.cues.yawn import YawnCue
 from .classifier.policies.rule_based import RuleBasedPolicy
-from .classifier.states import DimensionSpec
+from .classifier.states import ALERT_ON, DimensionSpec
 from .features.extractor import FaceFeatureExtractor
 from .labeling import LabelState
 from .pipeline import Pipeline
@@ -76,8 +76,17 @@ def build_detector(config: dict[str, Any]) -> LandmarkDetector:
 def _dimension_specs(config: dict[str, Any]) -> list[DimensionSpec]:
     specs = []
     for dim in config.get("assessment", {}).get("dimensions", []):
+        alert_on = str(dim.get("alert_on", "high"))
+        if alert_on not in ALERT_ON:
+            raise ValueError(f"{dim['name']}: alert_on は {'/'.join(ALERT_ON)} のいずれか。")
         specs.append(
-            DimensionSpec(dim["name"], dict(dim.get("levels", {})), tuple(dim.get("cues", [])))
+            DimensionSpec(
+                dim["name"],
+                dict(dim.get("levels", {})),
+                tuple(dim.get("cues", [])),
+                alert_on,
+                str(dim.get("alert_name", "")),
+            )
         )
     return specs
 
@@ -89,7 +98,10 @@ def build_classifier(config: dict[str, Any]) -> Classifier:
         # 学習済み model.pkl を読む判定器。cue は使わないので組み立てない。
         from .classifier.ml_based import MLClassifier, load_bundle
 
-        return MLClassifier(load_bundle(policy_cfg.get("model_path", "models/model.pkl")))
+        return MLClassifier(
+            load_bundle(policy_cfg.get("model_path", "models/model.pkl")),
+            _dimension_specs(config),
+        )
     if ptype != "rule_based":
         raise ValueError(f"未知の policy type: {ptype}")
 

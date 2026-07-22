@@ -124,15 +124,20 @@ def _draw_mesh(img: np.ndarray, lm: FaceLandmarks) -> None:
 
 
 def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
+    # バーの長さと段階は「警告の強さ」。集中のように高いほど良い軸は反転して表示される
+    # （low_concentration が伸びる＝集中していない）ので、元のスコアも併記する。
     x, y, step = 16, 40, 66
     for dim in assessment.dimensions.values():
         color = _COLORS[dim.level]
-        _text(img, f"{dim.name}: {dim.level.name} {dim.score:.2f}", (x, y), 0.7, color)
+        _text(img, f"{dim.display_name}: {dim.level.name} {dim.alarm:.2f}", (x, y), 0.7, color)
         bar_y = y + 12
         cv2.rectangle(img, (x, bar_y), (x + 220, bar_y + 14), (60, 60, 60), -1)
-        cv2.rectangle(img, (x, bar_y), (x + int(220 * dim.score), bar_y + 14), color, -1)
-        if dim.contributing:
-            _text(img, ",".join(dim.contributing), (x, y + 44), 0.5, color)
+        cv2.rectangle(img, (x, bar_y), (x + int(220 * dim.alarm), bar_y + 14), color, -1)
+        notes = list(dim.contributing)
+        if dim.alert_score is not None:
+            notes.insert(0, f"{dim.name} {dim.score:.2f}")
+        if notes:
+            _text(img, ",".join(notes), (x, y + 44), 0.5, color)
         y += step
 
 

@@ -152,12 +152,27 @@ class CueResult:
 
 @dataclass(frozen=True)
 class Dimension:
-    """1本の評価軸の結果。"""
+    """1本の評価軸の結果。
+
+    score は軸そのものの量（集中なら「集中している度合い」）で、学習・記録はこちらを使う。
+    警告の強さは軸の向きによって score と逆になる（集中は低いほど警告したい）ので、
+    反転する軸だけ alert_score を別に持つ。level は常に「警告の強さ」の段階。
+    """
 
     name: str
     score: float  # 0..1
     level: Level
     contributing: tuple[str, ...] = ()  # 根拠になった cue 名
+    alert_score: float | None = None  # 警告の強さ(0..1)。None なら score と同じ
+    alert_name: str = ""  # 警告としての表示名。空なら name
+
+    @property
+    def alarm(self) -> float:
+        return self.score if self.alert_score is None else self.alert_score
+
+    @property
+    def display_name(self) -> str:
+        return self.alert_name or self.name
 
 
 @dataclass(frozen=True)
@@ -179,7 +194,7 @@ class Assessment:
         return max(d.level for d in self.dimensions.values())
 
     def headline(self) -> Dimension | None:
-        # 最も重症の軸。簡易表示用。
+        # 最も警告の強い軸。簡易表示用。
         if not self.dimensions:
             return None
-        return max(self.dimensions.values(), key=lambda d: d.score)
+        return max(self.dimensions.values(), key=lambda d: d.alarm)

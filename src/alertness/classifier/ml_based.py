@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from ..contracts import Assessment, Dimension, Level, Observation
+from .states import DimensionSpec, alarm_of, level_for
 
 # 学習のターゲット列 "label_<軸>" と、本体の評価軸名 "<軸>" をつなぐ接頭辞。
 _AXIS_PREFIX = "label_"
@@ -41,7 +42,9 @@ def _level_of(name: str) -> Level:
 class MLClassifier:
     """bundle の軸ごとのモデルで assess する。Classifier ポートの実装。"""
 
-    def __init__(self, bundle: Mapping[str, object]) -> None:
+    def __init__(
+        self, bundle: Mapping[str, object], dimensions: Sequence[DimensionSpec] | None = None
+    ) -> None:
         models = bundle.get("models")
         features = bundle.get("features")
         if not models:
@@ -50,6 +53,8 @@ class MLClassifier:
             raise ValueError("model.pkl に特徴量の列順(features)が入っていません。")
         self._models = dict(models)
         self._features = list(features)
+        # 軸の向き（高いほど良い軸か）は config 側の取り決めなので、rule と同じ spec を使う。
+        self._specs = {s.name: s for s in (dimensions or ())}
 
     def assess(self, obs: Observation) -> Assessment:
         # 欠損は 0.0（学習側の fillna(0.0) と揃える）。列順は bundle に従う。
@@ -58,8 +63,16 @@ class MLClassifier:
         for target, model in self._models.items():
             name = _dimension_name(target)
             level, score = self._predict(model, vector)
-            dims[name] = Dimension(name, score, level)
+            dims[name] = self._as_dimension(name, score, level)
         return Assessment(dimensions=dims, timestamp=obs.features.timestamp)
+
+    def _as_dimension(self, name: str, score: float, level: Level) -> Dimension:
+        # 反転する軸（集中など）は、予測した段階ではなく警告の強さから段階を引き直す。
+        spec = self._specs.get(name)
+        if spec is None or not spec.inverted:
+            return Dimension(name, score, level)
+        alarm = alarm_of(spec, score)
+        return Dimension(name, score, level_for(alarm, spec.levels), (), alarm, spec.alert_name)
 
     def _predict(self, model: object, vector: Sequence[float]) -> tuple[Level, float]:
         level = _level_of(str(model.predict([vector])[0]))

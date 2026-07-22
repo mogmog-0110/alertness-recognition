@@ -42,6 +42,11 @@ class AttentionHoldCue:
             for g, y in zip(gaze, yaws, strict=False)
         ]
         held = trailing_true_seconds(times, on)
-        score = clamp(held / self.sustained_seconds) if self.sustained_seconds > 0 else 0.0
+        # 起動直後は履歴が sustained_seconds に満たない。そこを満点扱いにも 0 扱いにもせず、
+        # 「見えている範囲での保持率」で採点する（集中は低いほど警告する軸なので、履歴不足を
+        # 0＝集中していない と読むと起動直後に必ず誤警告になる）。
+        span = times[-1] - times[0]
+        required = min(self.sustained_seconds, span) if span > 0 else 0.0
+        score = clamp(held / required) if required > 0 else 1.0
         active = held >= self.sustained_seconds
         return CueResult(self.name, self.dimension, score, active, f"注視保持 {held:.1f}s")

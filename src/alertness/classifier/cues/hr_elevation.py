@@ -7,6 +7,12 @@
 どちらも「本人の安静時」を履歴から推定して相対化する（adaptive）。HRV が確度高く得られていれば
 そちらを優先し、無ければ HR に退避する。rPPG 無効／推定前で何も無いときは inactive
 （ストレスを none と断定しない）。キャリブ進行度は常時出る HR 基準の確立度で表す。
+
+測れていないときに 0（＝ストレスなし）を出すと嘘になるので、次の2つを守る:
+- 安静基準が未確立の間は判定を出さない。暫定の固定基準で判定すると、平常心拍が高い人は
+  起動直後に必ずストレス高と出てしまう。
+- 頭が動いている間の rPPG は当てにならないので判定を止め、直前の値を短時間だけ保つ。
+  動くたびに 0 へ落ちると「動かすとストレスが下がる」という誤った像を与えるため。
 """
 
 from __future__ import annotations
@@ -36,6 +42,9 @@ class HrElevationCue:
         rmssd_span: float = 25.0,
         rmssd_percentile: float = 75.0,
         hrv_min_samples: int = 4,
+        require_calibration: bool = True,
+        max_motion_deg: float = 6.0,
+        hold_seconds: float = 10.0,
     ) -> None:
         self.span_bpm = span_bpm  # HR: baseline から満点までの上昇幅
         self.min_quality = min_quality  # これ未満の HR 推定は信用しない
@@ -47,26 +56,61 @@ class HrElevationCue:
         self.rmssd_span = rmssd_span  # HRV: baseline からの低下幅で満点
         self.rmssd_percentile = rmssd_percentile  # HRV 基準に使う上側パーセンタイル（安静=高RMSSD）
         self.hrv_min_samples = hrv_min_samples  # 安静基準を作るのに要る HRV 標本数
+        self.require_calibration = require_calibration  # 安静基準が確立するまで判定を出さない
+        self.max_motion_deg = max_motion_deg  # 頭部のふらつきがこれを超えたら測定を止める
+        self.hold_seconds = hold_seconds  # 測れない間、直前の値を保つ上限
+        self._held = 0.0  # 直前に出せた値
+        self._held_at: float | None = None  # その時刻
 
     def evaluate(self, obs: Observation) -> CueResult:
         progress = self._progress(obs)
+        now = obs.features.timestamp
         if not obs.features.face_present:
+            self._held, self._held_at = 0.0, None  # 離席したら保持をやめる
             return CueResult(self.name, self.dimension, 0.0, False, "顔なし", progress)
+
+        if self._moving(obs):
+            return self._hold(now, progress, "頭部が動いている")
 
         hrv = self._hrv_stress(obs)  # 確度が高い窓なら HRV を優先。
         if hrv is not None:
             score, detail = hrv
-            return CueResult(self.name, self.dimension, score, score >= 0.5, detail, progress)
+            return self._emit(now, score, detail, progress)
 
         recent = self._valid(obs, "hr_bpm", self.sustained_seconds, self.min_quality)
         if not recent:
-            return CueResult(self.name, self.dimension, 0.0, False, "心拍なし", progress)
+            return self._hold(now, progress, "心拍なし")
+
+        baseline, ready = self._baseline(obs)
+        if self.require_calibration and not ready:
+            return CueResult(self.name, self.dimension, 0.0, False, "安静基準を測定中", progress)
 
         current = float(np.median([v for _, v in recent]))
-        baseline, ready = self._baseline(obs)
         score = clamp((current - baseline) / self.span_bpm) if self.span_bpm > 0 else 0.0
-        detail = f"HR {current:.0f} base {baseline:.0f}{'' if ready else ' (warm)'}"
+        return self._emit(now, score, f"HR {current:.0f} base {baseline:.0f}", progress)
+
+    def _emit(self, now: float, score: float, detail: str, progress: float | None) -> CueResult:
+        self._held, self._held_at = score, now
         return CueResult(self.name, self.dimension, score, score >= 0.5, detail, progress)
+
+    def _hold(self, now: float, progress: float | None, reason: str) -> CueResult:
+        # 測れない間は直前の値を保つ。保持中は active にしない（根拠として数えない）。
+        if self._held_at is None or now - self._held_at > self.hold_seconds:
+            return CueResult(self.name, self.dimension, 0.0, False, reason, progress)
+        detail = f"{reason}（保持）"
+        return CueResult(self.name, self.dimension, self._held, False, detail, progress)
+
+    def _moving(self, obs: Observation) -> bool:
+        # 頭部の振れ幅で動きを見る。動いている間の額の色変化は脈より動きの影響が大きい。
+        if self.max_motion_deg <= 0:
+            return False
+        window = max(1.0, self.sustained_seconds)
+        for key in ("yaw", "pitch"):
+            _, values = window_values(obs, key, window, float("nan"))
+            clean = [v for v in values if not math.isnan(v)]
+            if len(clean) >= 3 and float(np.std(clean)) > self.max_motion_deg:
+                return True
+        return False
 
     def _hrv_stress(self, obs: Observation) -> tuple[float, str] | None:
         # HRV(RMSSD)が本人の安静基準を作れるほど貯まり、直近にも値があれば (score, detail)。

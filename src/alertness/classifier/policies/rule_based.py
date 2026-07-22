@@ -11,7 +11,7 @@ from collections.abc import Sequence
 
 from ...contracts import Assessment, CueResult, Dimension, Observation
 from ...geometry import clamp
-from ..states import DimensionSpec, level_for
+from ..states import DimensionSpec, alarm_of, level_for
 
 
 class RuleBasedPolicy:
@@ -36,8 +36,16 @@ class RuleBasedPolicy:
             results = by_dim.get(spec.name, [])
             score = self._smooth(spec.name, self._dimension_score(spec, results))
             contributing = tuple(r.name for r in results if r.active)
-            level = level_for(score, spec.levels)
-            dims[spec.name] = Dimension(spec.name, score, level, contributing)
+            alarm = alarm_of(spec, score)
+            level = level_for(alarm, spec.levels)
+            dims[spec.name] = Dimension(
+                spec.name,
+                score,
+                level,
+                contributing,
+                alarm if spec.inverted else None,
+                spec.alert_name,
+            )
         return Assessment(dimensions=dims, timestamp=obs.features.timestamp, cues=tuple(cues))
 
     def _dimension_score(self, spec: DimensionSpec, results: Sequence[CueResult]) -> float:

@@ -32,6 +32,8 @@ normalize:
 
 # 何を判定するか（評価軸）。軸を増やせば判定対象がそのまま増える。
 # 各軸は連続スコア(0..1)を持ち、levels でレベルに区切る。
+# alert_on は軸の向き。既定の high はスコアが高いほど警告、low は低いほど警告（集中など、
+# 高いほど良い軸）。スコア自体の意味は変えないので、記録・学習はそのまま使える。
 assessment:
   dimensions:
     - name: drowsiness        # 眠気
@@ -43,6 +45,8 @@ assessment:
     - name: concentration     # 集中（視線・頭部の注視保持で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [attention_hold]
+      alert_on: low           # 集中しているときではなく、していないときに警告する
+      alert_name: low_concentration
     - name: stress            # ストレス・苛立ち（rPPG の心拍上昇で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [hr_elevation]    # hr_elevation は rppg.enabled=true のときだけ効く
@@ -61,8 +65,10 @@ cues:
   # 集中: 視線が載り頭部が安定した状態が sustained_seconds 続けば満点。
   attention_hold: { weight: 1.0, gaze_on_threshold: 0.035, steady_yaw_deg: 12, sustained_seconds: 3.0 }
   # ストレス: rPPG の心拍が「本人の安静時」から span 上がると満点。
-  # adaptive_baseline=true で履歴から安静時を推定（履歴が浅い間は baseline_bpm で代用）。
-  hr_elevation: { weight: 1.0, span_bpm: 25, min_quality: 0.05, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 45, baseline_percentile: 25 }
+  # adaptive_baseline=true で履歴から安静時を推定する。その基準が出来上がるまでは判定を出さない
+  # （require_calibration）。頭が max_motion_deg より振れている間は rPPG が当てにならないので
+  # 判定を止め、直前の値を hold_seconds だけ保つ。
+  hr_elevation: { weight: 1.0, span_bpm: 25, min_quality: 0.05, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 45, baseline_percentile: 25, require_calibration: true, max_motion_deg: 6.0, hold_seconds: 10.0 }
 
 # カメラからの心拍推定（rPPG）。stress の特徴源。numpy だけの軽い処理なので既定で有効。
 # 起動後 数秒ぶん貯まると各フレームに hr_bpm / rppg_quality が乗る。stress を使わない用途では
@@ -93,6 +99,7 @@ feedback:
   sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted）
     drowsiness: drowsy
     distraction: distracted
+    concentration: distracted # 集中していないときに鳴る（alert_on: low のため）
 
 # 学習データの録画。--record で有効化すると各フレームの特徴量＋判定をCSVに残す。
 recorder:

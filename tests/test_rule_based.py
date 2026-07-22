@@ -53,6 +53,32 @@ def test_dimensions_are_independent():
     assert result.dimensions["distraction"].level == Level.HIGH
 
 
+def test_inverted_axis_alerts_when_score_is_low():
+    # 集中は高いほど良い軸。集中していない（score 低）ときに警告が立つ。
+    spec = DimensionSpec("concentration", LEVELS, ("attention_hold",), "low", "low_concentration")
+    policy = _policy([spec], {"attention_hold": 1.0})
+
+    idle = policy.decide(_obs(), [CueResult("attention_hold", "concentration", 0.0, False, "")])
+    dim = idle.dimensions["concentration"]
+    assert dim.score == 0.0  # 軸そのものの値は「集中していない」まま
+    assert dim.alarm == 1.0  # 警告の強さは反転する
+    assert dim.level == Level.HIGH
+    assert dim.display_name == "low_concentration"
+
+    focused = policy.decide(_obs(), [CueResult("attention_hold", "concentration", 1.0, True, "")])
+    assert focused.dimensions["concentration"].level == Level.NONE
+
+
+def test_normal_axis_keeps_score_as_alarm():
+    spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure",))
+    policy = _policy([spec], {"eye_closure": 1.0})
+    result = policy.decide(_obs(), [CueResult("eye_closure", "drowsiness", 0.9, True, "")])
+    dim = result.dimensions["drowsiness"]
+    assert dim.alert_score is None
+    assert dim.alarm == dim.score
+    assert dim.display_name == "drowsiness"
+
+
 def test_contributing_lists_active_cues_only():
     spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure", "blink"))
     policy = _policy([spec], {"eye_closure": 1.0, "blink": 1.0})
