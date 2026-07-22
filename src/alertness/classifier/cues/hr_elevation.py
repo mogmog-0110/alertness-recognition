@@ -51,7 +51,7 @@ class HrElevationCue:
     def __init__(
         self,
         span_bpm: float = 25.0,
-        min_quality: float = 0.5,
+        min_quality: float = 0.4,
         sustained_seconds: float = 5.0,
         baseline_bpm: float = 70.0,
         adaptive_baseline: bool = True,
@@ -140,10 +140,12 @@ class HrElevationCue:
 
     def _moving(self, obs: Observation) -> bool:
         # 頭部の振れ幅で動きを見る。動いている間の額の色変化は脈より動きの影響が大きい。
+        # 生の pitch/yaw は ±180 を跨いで折り返すので、必ず正規化済み（畳んだ）値を使う。
+        # 生値を使うと、静止していても標準偏差が 180 度近くになり常時「動いている」になる。
         if self.max_motion_deg <= 0:
             return False
         window = max(1.0, self.sustained_seconds)
-        for key in ("yaw", "pitch"):
+        for key in ("yaw_rel", "pitch_rel"):
             _, values = window_values(obs, key, window, float("nan"))
             clean = [v for v in values if not math.isnan(v)]
             if len(clean) >= 3 and float(np.std(clean)) > self.max_motion_deg:

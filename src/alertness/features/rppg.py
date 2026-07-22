@@ -53,8 +53,10 @@ def estimate_hr(
     返すと心拍が 6 bpm 刻みでしか出ず、安静時からの上振れ（span 25 bpm）を測るには粗すぎる。
     ピーク周辺3点に放物線を当てて、ビンの間を補間する。
 
-    品質は帯域内でピークがどれだけ突出しているか。窓関数でピークは3ビンに広がるので、
-    ピーク±1ビンの電力を帯域全体と比べる。低いほど信用しない。
+    品質はピークが雑音の底からどれだけ突出しているか。帯域全体の電力と比べると、窓を
+    長くするほどビン数が増えて値が下がり、窓長ごとに意味が変わってしまう（同じ 0.3 が
+    8秒窓では悪い推定、30秒窓では良い推定になる）。そこで帯域の中央ビン電力＝雑音の底と
+    比べる。こちらは窓を長くすると素直に上がり、しきい値を窓長によらず使える。
     帯域内に成分が無い・標本が足りない場合は (nan, 0)。
     """
     x = np.asarray(signal, dtype=float).ravel()
@@ -78,8 +80,26 @@ def estimate_hr(
     hr = min(max(hr, min_bpm), max_bpm)
 
     lo, hi = max(0, peak - 1), min(band_power.size, peak + 2)
-    quality = float(np.sum(band_power[lo:hi]) / np.sum(band_power))
+    quality = _prominence_quality(band_power, lo, hi)
     return hr, quality
+
+
+# ピークが雑音の底の何倍あれば「見えている」とみなすか。合成波での実測で、これ未満の
+# 推定は誤差が二桁 bpm に跳ね、これを境に急に安定する。
+_NOISE_FLOOR_RATIO = 4.5
+
+
+def _prominence_quality(band_power: np.ndarray, lo: int, hi: int) -> float:
+    """ピークの突出度を 0..1 にする。0＝雑音の底と区別がつかない。"""
+    floor = float(np.median(band_power))
+    if floor <= 0:
+        return 0.0
+    peak = float(np.sum(band_power[lo:hi]))
+    bins = max(1, hi - lo)
+    prominence = peak / (bins * floor)
+    if prominence <= _NOISE_FLOOR_RATIO:
+        return 0.0
+    return float(min(1.0, 1.0 - _NOISE_FLOOR_RATIO / prominence))
 
 
 def _parabolic_offset(power: np.ndarray, peak: int) -> float:
@@ -143,10 +163,10 @@ class RppgEstimator:
     def __init__(
         self,
         fps: float = 30.0,
-        window_seconds: float = 10.0,
+        window_seconds: float = 20.0,
         min_bpm: float = 42.0,
         max_bpm: float = 180.0,
-        hrv_min_quality: float = 0.25,
+        hrv_min_quality: float = 0.5,
         hrv_min_beats: int = 8,
         hrv_enabled: bool = True,
         hrv_upsample: int = 16,
@@ -154,9 +174,13 @@ class RppgEstimator:
         self._fps = fps
         self._min_bpm = min_bpm
         self._max_bpm = max_bpm
-        self._maxlen = max(2, int(window_seconds * fps))
-        # 推定を始める前に、窓の半分ぶんは貯める（短すぎる窓は当てにならない）。
-        self._min_samples = max(8, self._maxlen // 2)
+        # 窓はフレーム数ではなく時間で切る。要求 fps が出ない機械だと、フレーム数で持つと
+        # 窓が何倍にも伸びる（60fps 設定で実測 10fps なら 10 秒のつもりが 56 秒になる）。
+        # 窓が伸びると心拍の変動と照明のドリフトが入り込み、ピークが潰れて品質が落ちる。
+        self._window_seconds = window_seconds
+        self._min_span = window_seconds / 2  # これだけの長さが貯まるまで推定しない
+        self._max_samples = max(16, int(window_seconds * 240))  # 暴走時の上限だけ設ける
+        self._buf: deque[tuple[float, np.ndarray]] = deque()
         # HRV は拍の時刻の精度で決まる。フレーム間隔そのままだと 30fps で RMSSD の下限が
         # 22ms（人の安静時 20〜50ms と同じ桁）になり測定にならないので、帯域制限補間で
         # 標本の間を埋める。x16 で下限は 30fps でも 3ms、60fps なら 2ms まで下がる。
@@ -164,7 +188,6 @@ class RppgEstimator:
         self._hrv_upsample = hrv_upsample
         self._hrv_min_quality = hrv_min_quality
         self._hrv_min_beats = hrv_min_beats
-        self._buf: deque[tuple[float, np.ndarray]] = deque(maxlen=self._maxlen)
 
     def augment(self, frame: Frame, landmarks: FaceLandmarks, features: Features) -> Features:
         if not landmarks.detected:
@@ -174,7 +197,12 @@ class RppgEstimator:
             return features
 
         self._buf.append((features.timestamp, rgb))
-        if len(self._buf) < self._min_samples:
+        cutoff = features.timestamp - self._window_seconds
+        while self._buf and self._buf[0][0] < cutoff:
+            self._buf.popleft()
+        while len(self._buf) > self._max_samples:
+            self._buf.popleft()
+        if len(self._buf) < 8 or self._span() < self._min_span:
             return features
 
         times = np.array([t for t, _ in self._buf])
@@ -195,7 +223,7 @@ class RppgEstimator:
         # 品質が高く窓が満杯（＝安定して長い）ときだけ HRV(RMSSD) を返す。それ以外は None。
         if not self._hrv_enabled:
             return None
-        if quality < self._hrv_min_quality or len(self._buf) < self._maxlen:
+        if quality < self._hrv_min_quality or self._span() < self._window_seconds * 0.9:
             return None
         times = peak_times(pulse, fs, self._min_bpm, self._max_bpm, self._hrv_upsample)
         rr = rr_intervals_ms(times)
@@ -203,6 +231,9 @@ class RppgEstimator:
             return None
         value = rmssd(rr)
         return None if math.isnan(value) else float(value)
+
+    def _span(self) -> float:
+        return self._buf[-1][0] - self._buf[0][0] if len(self._buf) > 1 else 0.0
 
     def _effective_fs(self, times: np.ndarray) -> float:
         # 実フレーム間隔から標本化周波数を出す。取れなければ公称 fps。

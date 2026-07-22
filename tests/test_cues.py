@@ -120,6 +120,26 @@ def test_hr_elevation_silent_until_baseline_ready():
     assert "測定中" in result.detail
 
 
+def test_hr_elevation_motion_gate_uses_normalized_pose():
+    # 生の pitch は ±180 を跨いで折り返す。そこを見ていると静止していても常に
+    # 「動いている」判定になり、ストレスが永久に保持へ落ちる。
+    frames = [
+        Features(
+            {
+                "hr_bpm": 100.0,
+                "rppg_quality": 0.7,
+                "pitch": 180.0 - 360.0 * (i % 2),
+                "pitch_rel": 0.0,
+            },
+            i * 0.1,
+        )
+        for i in range(1500)
+    ]
+    result = _feed(HrElevationCue(baseline_seconds=60.0), frames)
+    assert "動いている" not in result.detail
+    assert result.valid
+
+
 def test_hr_elevation_ignores_low_quality_estimates():
     # 品質が閾値未満の推定は基準にも現在値にも使わない（誤差が span と同じ桁になるため）。
     frames = _hr(100.0, 200.0, quality=0.2)
@@ -156,13 +176,15 @@ def test_hr_elevation_holds_baseline_through_long_elevation():
 
 def test_hr_elevation_holds_value_while_head_moves():
     # 基準確立後に高ストレスを出し、その直後に頭が動くと 0 に落とさず値を保つ。
-    calm = _hr(70.0, 100.0, yaw=0.0)
-    spike = _hr(100.0, 10.0, t0=100.0, yaw=0.0)
+    calm = _hr(70.0, 100.0, yaw_rel=0.0)
+    spike = _hr(100.0, 10.0, t0=100.0, yaw_rel=0.0)
     cue = HrElevationCue(span_bpm=25.0, baseline_seconds=60.0)
     assert _feed(cue, calm + spike).score >= 0.8
 
     moving = [
-        Features({"hr_bpm": 100.0, "rppg_quality": 0.7, "yaw": 30.0 * (-1) ** i}, 110.0 + i * 0.1)
+        Features(
+            {"hr_bpm": 100.0, "rppg_quality": 0.7, "yaw_rel": 30.0 * (-1) ** i}, 110.0 + i * 0.1
+        )
         for i in range(30)
     ]
     result = _feed(cue, calm + spike + moving, step=1)

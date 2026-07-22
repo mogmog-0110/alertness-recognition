@@ -30,7 +30,7 @@ class AttentionBufferCue:
         capacity_seconds: float = 2.0,
         latency_seconds: float = 0.1,
         gaze_on_threshold: float = 0.035,
-        on_target_yaw_deg: float = 12.0,
+        on_target_yaw_deg: float = 25.0,
         refill_rate: float = 1.0,
     ) -> None:
         self.capacity_seconds = capacity_seconds  # 注意の残高の上限（AttenD の 2 秒）
