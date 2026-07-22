@@ -10,6 +10,7 @@ cue は使わず、features を「学習時に保存した列順」でベクト�
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 from ..contracts import Assessment, Dimension, Level, Observation
 from .states import DimensionSpec, alarm_of, level_for
@@ -42,8 +43,9 @@ def _level_of(name: str) -> Level:
 class MLClassifier:
     """bundle の軸ごとのモデルで assess する。Classifier ポートの実装。"""
 
+    # bundle は pickle 由来で中身の型が揃わないため Any で受ける。
     def __init__(
-        self, bundle: Mapping[str, object], dimensions: Sequence[DimensionSpec] | None = None
+        self, bundle: Mapping[str, Any], dimensions: Sequence[DimensionSpec] | None = None
     ) -> None:
         models = bundle.get("models")
         features = bundle.get("features")
@@ -74,11 +76,11 @@ class MLClassifier:
         alarm = alarm_of(spec, score)
         return Dimension(name, score, level_for(alarm, spec.levels), (), alarm, spec.alert_name)
 
-    def _predict(self, model: object, vector: Sequence[float]) -> tuple[Level, float]:
+    def _predict(self, model: Any, vector: Sequence[float]) -> tuple[Level, float]:
         level = _level_of(str(model.predict([vector])[0]))
         return level, self._severity(model, vector, level)
 
-    def _severity(self, model: object, vector: Sequence[float], level: Level) -> float:
+    def _severity(self, model: Any, vector: Sequence[float], level: Level) -> float:
         # 0..1 の重症度。確率が取れれば段階の期待値でならし、無ければ段階そのもの。
         proba = getattr(model, "predict_proba", None)
         classes = getattr(model, "classes_", None)

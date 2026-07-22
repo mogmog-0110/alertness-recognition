@@ -22,7 +22,7 @@ def trailing_true_seconds(times: Sequence[float], flags: Sequence[bool]) -> floa
     if not times or not flags or not flags[-1]:
         return 0.0
     start = times[-1]
-    for t, c in zip(reversed(times), reversed(flags)):
+    for t, c in zip(reversed(times), reversed(flags), strict=True):
         if not c:
             break
         start = t

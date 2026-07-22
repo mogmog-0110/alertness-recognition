@@ -16,7 +16,7 @@ def current_closed_duration(times: Sequence[float], closed: Sequence[bool]) -> f
     if not times or not closed or not closed[-1]:
         return 0.0
     start = times[-1]
-    for t, c in zip(reversed(times), reversed(closed)):
+    for t, c in zip(reversed(times), reversed(closed), strict=True):
         if not c:
             break
         start = t

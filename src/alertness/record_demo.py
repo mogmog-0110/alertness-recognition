@@ -86,7 +86,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="デモを起動し、画面を録画して mp4 に保存する（ffmpeg が必要）"
     )
-    parser.add_argument("--out", default=None, help="保存先 mp4（既定: recordings/demo_<時刻>.mp4）")
+    parser.add_argument(
+        "--out", default=None, help="保存先 mp4（既定: recordings/demo_<時刻>.mp4）"
+    )
     parser.add_argument("--fps", type=int, default=30, help="録画フレームレート（既定: 30）")
     parser.add_argument(
         "--region",
@@ -100,7 +102,8 @@ def main(argv: list[str] | None = None) -> int:
         print("[record] ffmpeg が見つかりません。PATH に通してから再実行してください。")
         return 1
 
-    out = Path(args.out) if args.out else Path("recordings") / f"demo_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+    default_out = Path("recordings") / f"demo_{time.strftime('%Y%m%d_%H%M%S')}.mp4"
+    out = Path(args.out) if args.out else default_out
     out.parent.mkdir(parents=True, exist_ok=True)
 
     title = _window_title(args.region)

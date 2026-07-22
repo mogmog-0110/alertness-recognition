@@ -86,7 +86,10 @@ class App:
             self._close()
 
     def _run_guided(self, obs: Any) -> bool:
-        step = self._guided.step(obs.frame.timestamp)
+        guided = self._guided
+        if guided is None:
+            return False
+        step = guided.step(obs.frame.timestamp)
         self._labels.value = step.label
         self._maybe_cue(step)
         assessment = self._pipeline.classify(obs)
