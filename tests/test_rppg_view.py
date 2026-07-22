@@ -33,29 +33,29 @@ def _bottom_left(img: np.ndarray) -> int:
     return int((img[h - 130 : h, 0:280].sum(axis=2) > 0).sum())
 
 
-def test_rppg_view_draws_crop_and_waveform():
+def test_rppg_view_draws_crop_and_heatmap():
     view = RppgView(fps=30.0)
-    size = 200
-    lm = _landmarks(size)
-    canvas = np.zeros((size, size, 3), dtype=np.uint8)
+    w, h = 320, 240
+    lm = _landmarks(240)
+    canvas = np.zeros((h, w, 3), dtype=np.uint8)
     for i in range(40):
-        frame_img = np.zeros((size, size, 3), dtype=np.uint8)
+        frame_img = np.zeros((h, w, 3), dtype=np.uint8)
         frame_img[:, :] = (100, int(128 + 20 * np.sin(i * 0.6)), 150)  # 脈動色
         obs = _obs(frame_img, Features({"hr_bpm": 72.0, "rppg_quality": 0.3}, i / 30.0), lm)
-        canvas = np.zeros((size, size, 3), dtype=np.uint8)
+        canvas = np.zeros((h, w, 3), dtype=np.uint8)
         view.render(canvas, obs)
 
     assert _bottom_left(canvas) > 0
-    # 額切り出しのシアン枠 BGR(0,255,255) が描かれている。
+    # raw / pulse タイルのシアン枠 BGR(0,255,255) が描かれている。
     cyan = (canvas[:, :, 0] < 80) & (canvas[:, :, 1] > 200) & (canvas[:, :, 2] > 200)
     assert cyan.sum() > 0
 
 
 def test_rppg_view_handles_no_face():
     view = RppgView()
-    size = 200
-    lm = _landmarks(size, detected=False)
-    canvas = np.zeros((size, size, 3), dtype=np.uint8)
-    obs = _obs(np.zeros((size, size, 3), dtype=np.uint8), Features({}, 0.0), lm)
+    w, h = 320, 240
+    lm = _landmarks(240, detected=False)
+    canvas = np.zeros((h, w, 3), dtype=np.uint8)
+    obs = _obs(np.zeros((h, w, 3), dtype=np.uint8), Features({}, 0.0), lm)
     view.render(canvas, obs)  # 顔なしでもクラッシュしない
     assert _bottom_left(canvas) > 0  # 少なくともタイトルは描かれる
