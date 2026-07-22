@@ -131,6 +131,9 @@ policy:
 
 feedback:
   window: true                # OpenCV ウィンドウに表示
+  window_width: 1280          # 表示だけこの幅に拡大する（0 なら撮影したままの大きさ）。
+                              # 撮影解像度とは切り離してある。rPPG の精度は実効フレーム
+                              # レートで決まるので、撮影は軽くしたまま表示だけ大きくできる。
   draw_landmarks: true
   face_mesh: false            # true にすると顔全体のメッシュ（網目）を描く
   stress_meter: true          # 右上にストレスの安静基準キャリブの進行度バーを表示。

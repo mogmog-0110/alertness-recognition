@@ -206,6 +206,7 @@ def build_sinks(
                 feedback.get("stress_meter", False),
                 feedback.get("timeline", ""),
                 feedback.get("timeline_seconds", 300.0),
+                feedback.get("window_width", 0),
             )
         )
     if recording:

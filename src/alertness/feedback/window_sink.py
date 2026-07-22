@@ -29,6 +29,7 @@ class OpenCvWindowSink:
         stress_meter: bool = False,
         timeline: str = "",
         timeline_seconds: float = 300.0,
+        window_width: int = 0,
     ) -> None:
         self._draw_landmarks = draw_landmarks
         self._draw_mesh = draw_mesh
@@ -37,6 +38,9 @@ class OpenCvWindowSink:
         self._labels = labels  # 録画ラベル表示用（録画中のみ渡される）
         self._alert = AudioAlert(alert_cooldown_seconds, audio, sounds)
         self._timeline = self._make_timeline(timeline, timeline_seconds)
+        # 表示の大きさは撮影解像度と切り離す。rPPG の精度は実効フレームレートで決まるので
+        # 撮影は軽いままにし、見づらいときはここで拡大する。
+        self._window_width = window_width
 
     @staticmethod
     def _make_timeline(name: str, seconds: float):
@@ -59,10 +63,19 @@ class OpenCvWindowSink:
             self._timeline.render(image, assessment)
         if self._labels is not None:
             overlay.draw_record_label(image, self._labels.value)
-        cv2.imshow(overlay.WINDOW_NAME, image)
+        cv2.imshow(overlay.WINDOW_NAME, self._fit(image))
         for dim in assessment.dimensions.values():
             if dim.level >= Level.MEDIUM:
                 self._alert.trigger(dim.name)
+
+    def _fit(self, image):
+        # 縦横比は保ったまま、指定の幅に合わせる。0 なら撮影したままの大きさで出す。
+        width = self._window_width
+        if width <= 0 or width == image.shape[1]:
+            return image
+        height = round(image.shape[0] * width / image.shape[1])
+        interpolation = cv2.INTER_LINEAR if width > image.shape[1] else cv2.INTER_AREA
+        return cv2.resize(image, (width, height), interpolation=interpolation)
 
     def close(self) -> None:
         cv2.destroyAllWindows()

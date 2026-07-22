@@ -65,3 +65,19 @@ def test_stress_meter_full_when_calibrated():
     a = _assessment(progress=1.0)
     img = overlay.render(obs, a, stress_meter=True)
     assert _top_right_pixels(img) > 0
+
+
+def test_window_sink_scales_display_only():
+    """表示の拡大は撮影解像度を変えない（rPPG は実効fpsで決まるため撮影は軽いまま）。"""
+    import numpy as np
+
+    from alertness.feedback.window_sink import OpenCvWindowSink
+
+    sink = OpenCvWindowSink(window_width=1280)
+    small = np.zeros((480, 640, 3), dtype=np.uint8)
+    fitted = sink._fit(small)
+    assert fitted.shape[1] == 1280
+    assert fitted.shape[0] == 960  # 縦横比は保たれる
+    assert small.shape == (480, 640, 3)  # 元の画像は変わらない
+
+    assert OpenCvWindowSink(window_width=0)._fit(small).shape == small.shape
