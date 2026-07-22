@@ -161,7 +161,8 @@ def test_hr_elevation_stays_quiet_through_noisy_rest():
         result = cue.evaluate(make_observation(frames[i], FakeHistory(frames[: i + 1])))
         if frames[i].timestamp > 50.0:
             scores.append(result.score)
-    assert max(scores) < 0.6  # ばらつきだけで警告レベルに乗らない
+    # 誤警告率で見る。単発の外れではなく「鳴り続けないこと」が要件。
+    assert np.mean(np.array(scores) >= 0.6) < 0.05
 
 
 def test_hr_elevation_holds_baseline_through_long_elevation():
@@ -235,3 +236,25 @@ def test_hr_elevation_falls_back_to_hr_without_hrv():
     )
     assert result.detail.startswith("HR ")  # HRV ではなく HR 経由
     assert result.active
+
+
+def test_hr_elevation_baseline_survives_a_long_freeze():
+    # 上振れで基準の更新を止めている間に時間が経っても、基準が消えないこと。
+    # 消えると再開直後の数点で新しい基準ができ、そこに測り損ねた値が混ざると崩壊する。
+    cue = HrElevationCue(span_bpm=10.0, baseline_seconds=60.0)
+    _feed(cue, _hr(62.0, 100.0))
+    base_before, _, ready = cue._baseline()
+    assert ready
+
+    # 基準の窓(60秒)より長く上振れが続く
+    _feed(cue, _hr(62.0, 100.0) + _hr(75.0, 120.0, t0=100.0))
+    base_after, _, ready = cue._baseline()
+    assert ready
+    assert abs(base_after - base_before) < 3.0  # 基準は安静のまま
+
+
+def test_hr_elevation_rest_samples_are_time_spaced():
+    # 毎フレーム積むと直近の1点が重複して基準を乗っ取る。間隔を空けて積むこと。
+    cue = HrElevationCue(baseline_seconds=60.0, rest_interval=1.0)
+    _feed(cue, _hr(62.0, 60.0), step=1)  # 0.1秒刻みで600フレーム
+    assert len(cue._rest) <= 65  # 1秒間隔なら60件前後。重複していれば600件になる

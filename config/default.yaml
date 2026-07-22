@@ -77,14 +77,16 @@ cues:
   # ストレス: rPPG の心拍が「本人の安静時」から上がると満点。基準も現在値も中央値で取る
   # （統計量を揃えないと、変化が無くても推定のばらつきぶん差が正に出る）。満点までの幅は
   # span_bpm と「ばらつき(MAD)×noise_k」の大きい方で、推定が粗いときほど大きな差を要求する。
-  # min_quality=0.4 は合成波での実測から。品質はピークが雑音の底の何倍かで定義してあり、
-  # 0 が「雑音と区別がつかない」。0.4 未満だと心拍推定の誤差の中央値が二桁 bpm に跳ねる。
+  # span_bpm=10 と min_quality=0.6 は実収録（安静2分→暗算2分→回復2分）から決めた。
+  # 暗算での心拍上昇は実測 +7.1bpm。当初の 25 は根拠のない見積もりで、実際の3倍以上あった。
+  # 品質を上げるほど効果が強く出る（下限0.4で+0.3bpm、0.5で+5.8、0.6で+7.1、0.7で+8.7）ので、
+  # 0.4〜0.5 では雑音が効果を打ち消していた。0.6 で 安静0% / 暗算96% / 回復0% に分離する。
   # 基準は cue 自身が持ち、スコアが freeze_at を超えている間は更新を止める。止めないと、
   # 上がった状態が新しい「安静」になり、baseline_seconds より長い負荷を見失う。
   # adaptive_baseline=true で履歴から安静時を推定する。その基準が出来上がるまでは判定を出さない
   # （require_calibration。baseline_seconds の6割＝既定 72 秒）。頭が max_motion_deg より振れている間は rPPG が当てにならないので
   # 判定を止め、直前の値を hold_seconds だけ保つ。
-  hr_elevation: { weight: 1.0, span_bpm: 25, min_quality: 0.4, noise_k: 4.0, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 120, freeze_at: 0.3, require_calibration: true, max_motion_deg: 6.0, hold_seconds: 10.0 }
+  hr_elevation: { weight: 1.0, span_bpm: 10, min_quality: 0.6, noise_k: 6.0, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 120, freeze_at: 0.3, require_calibration: true, max_motion_deg: 6.0, hold_seconds: 10.0, min_rest_samples: 30, rest_interval: 1.0 }
 
 # カメラからの心拍推定（rPPG）。stress の特徴源。numpy だけの軽い処理なので既定で有効。
 # 起動後 数秒ぶん貯まると各フレームに hr_bpm / rppg_quality が乗る。stress を使わない用途では
@@ -97,9 +99,13 @@ rppg:
   # HRV(RMSSD) は拍の時刻の精度で決まる。フレーム間隔のままだと 30fps で下限 22ms、
   # 60fps でも 11ms あり、人の安静時 RMSSD（20〜50ms）を測るには足りない。帯域制限補間で
   # 標本の間を埋めると 30fps で 3ms、60fps で 2ms まで下がる（合成波での実測）。
-  hrv_enabled: true
+  # HRV は既定で無効。実収録で記録された RMSSD は中央値 225ms（拍間隔の24%）で、人の
+  # 安静時 20〜50ms とは桁が違い、しかもストレス時に下がるべきところが上がっていた。
+  # 拍の時刻の量子化は補間で解決したが、雑音の乗った脈波でのピーク検出そのものが崩れている。
+  # 実装を直すまで判定には使わない（生理的にありえない値は出力側でも弾いている）。
+  hrv_enabled: false
   hrv_upsample: 16            # 拍位置を求める前に標本を何倍に補間するか
-  hrv_min_quality: 0.5        # この品質を超えた安定窓のときだけ出す（機会的）
+  hrv_min_quality: 0.5        # 有効にした場合、この品質を超えた安定窓のときだけ出す
 
 # cue の結果を統合して最終判定を出す方針
 policy:

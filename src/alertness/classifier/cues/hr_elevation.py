@@ -50,19 +50,21 @@ class HrElevationCue:
 
     def __init__(
         self,
-        span_bpm: float = 25.0,
-        min_quality: float = 0.4,
+        span_bpm: float = 10.0,
+        min_quality: float = 0.6,
         sustained_seconds: float = 5.0,
         baseline_bpm: float = 70.0,
         adaptive_baseline: bool = True,
         baseline_seconds: float = 120.0,
-        noise_k: float = 4.0,
+        noise_k: float = 6.0,
         freeze_at: float = 0.3,
         rmssd_span: float = 25.0,
         hrv_min_samples: int = 4,
         require_calibration: bool = True,
         max_motion_deg: float = 6.0,
         hold_seconds: float = 10.0,
+        min_rest_samples: int = 30,
+        rest_interval: float = 1.0,
     ) -> None:
         self.span_bpm = span_bpm  # HR: baseline から満点までの上昇幅
         self.min_quality = min_quality  # これ未満の HR 推定は信用しない
@@ -77,9 +79,12 @@ class HrElevationCue:
         self.require_calibration = require_calibration  # 安静基準が確立するまで判定を出さない
         self.max_motion_deg = max_motion_deg  # 頭部のふらつきがこれを超えたら測定を止める
         self.hold_seconds = hold_seconds  # 測れない間、直前の値を保つ上限
+        self.min_rest_samples = min_rest_samples  # 基準を確定するのに要る安静の標本数
+        self.rest_interval = rest_interval  # 基準に積む間隔（秒）
         self._held = 0.0  # 直前に出せた値
         self._held_at: float | None = None  # その時刻
         self._rest: deque[tuple[float, float]] = deque()  # 安静とみなした (時刻, 心拍)
+        self._rest_at: float | None = None  # 最後に積んだ時刻
 
     def evaluate(self, obs: Observation) -> CueResult:
         progress = self._progress(obs)
@@ -116,9 +121,17 @@ class HrElevationCue:
         # 「安静」になり、2分続く負荷を1分で見失う。基準が出来るまでは無条件に貯める。
         if ready and score >= self.freeze_at:
             return
+        # 毎フレーム積むと、直近の1点が窓の長さぶん重複して基準を乗っ取る。実測では外れ値
+        # 1つが49回積まれ、基準が 61.7 から 44.9bpm へ落ちた。時間を空けて積む。
+        if self._rest_at is not None and now - self._rest_at < self.rest_interval:
+            return
+        self._rest_at = now
         self._rest.append((now, current))
+        # 古いものを落とすが、必ず min_rest_samples は残す。更新を止めている間に時間だけが
+        # 過ぎると、再開した瞬間に「全部古い」と判定されて基準が丸ごと消え、その直後の
+        # 数点（測り損ねた値を含む）で新しい基準ができてしまうため。
         cutoff = now - self.baseline_seconds
-        while self._rest and self._rest[0][0] < cutoff:
+        while len(self._rest) > self.min_rest_samples and self._rest[0][0] < cutoff:
             self._rest.popleft()
 
     def _score(self, rise: float, span: float, spread: float) -> float:
@@ -191,15 +204,19 @@ class HrElevationCue:
             return None
         if len(self._rest) < 2:
             return 0.0
-        covered = self._rest[-1][0] - self._rest[0][0]
         required = self._required_span()
-        return clamp(covered / required) if required > 0 else 1.0
+        by_time = clamp(self._covered() / required) if required > 0 else 1.0
+        by_count = clamp(len(self._rest) / max(1, self.min_rest_samples))
+        return min(by_time, by_count)  # 時間と標本数の両方が揃って初めて 100%
 
     def _baseline(self) -> tuple[float, float, bool]:
         # 返り値は (基準bpm, 推定のばらつき, 確定か)。確定＝本人の安静を十分な長さ見た状態。
         if not self.adaptive_baseline:
             return self.baseline_bpm, 0.0, True
-        if self._rest and (self._rest[-1][0] - self._rest[0][0]) >= self._required_span():
+        if len(self._rest) >= self.min_rest_samples and self._covered() >= self._required_span():
             values = [v for _, v in self._rest]
             return float(np.median(values)), _mad(values), True
         return self.baseline_bpm, 0.0, False
+
+    def _covered(self) -> float:
+        return self._rest[-1][0] - self._rest[0][0] if len(self._rest) > 1 else 0.0

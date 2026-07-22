@@ -168,7 +168,9 @@ class RppgEstimator:
         max_bpm: float = 180.0,
         hrv_min_quality: float = 0.5,
         hrv_min_beats: int = 8,
-        hrv_enabled: bool = True,
+        hrv_enabled: bool = False,
+        hrv_max_ratio: float = 0.15,
+        hrv_max_ms: float = 150.0,
         hrv_upsample: int = 16,
     ) -> None:
         self._fps = fps
@@ -186,6 +188,10 @@ class RppgEstimator:
         # 標本の間を埋める。x16 で下限は 30fps でも 3ms、60fps なら 2ms まで下がる。
         self._hrv_enabled = hrv_enabled
         self._hrv_upsample = hrv_upsample
+        # 生理的にありえない値を弾く。実測では、拍検出が崩れると RMSSD が拍間隔の 24%
+        # （225ms）といった値を出す。人の安静時は 20〜50ms、拍間隔の数%に収まる。
+        self._hrv_max_ratio = hrv_max_ratio
+        self._hrv_max_ms = hrv_max_ms
         self._hrv_min_quality = hrv_min_quality
         self._hrv_min_beats = hrv_min_beats
 
@@ -230,7 +236,16 @@ class RppgEstimator:
         if rr.size < self._hrv_min_beats:
             return None
         value = rmssd(rr)
-        return None if math.isnan(value) else float(value)
+        if math.isnan(value) or not self._plausible(value, rr):
+            return None
+        return float(value)
+
+    def _plausible(self, value: float, rr: np.ndarray) -> bool:
+        # 拍検出が崩れると RMSSD は拍間隔と同じ桁まで跳ねる。心臓由来ならありえない。
+        mean_rr = float(np.mean(rr))
+        if mean_rr <= 0:
+            return False
+        return value <= self._hrv_max_ms and value <= self._hrv_max_ratio * mean_rr
 
     def _span(self) -> float:
         return self._buf[-1][0] - self._buf[0][0] if len(self._buf) > 1 else 0.0
