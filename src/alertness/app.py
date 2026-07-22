@@ -26,6 +26,7 @@ class App:
         video: str | None = None,
         label: str = "",
         guided: bool = False,
+        protocol: str = "acted",
         rounds: int = 3,
         subject: str = "",
     ) -> None:
@@ -33,7 +34,7 @@ class App:
         self._feedback = config.get("feedback", {})
         self._labels = LabelState(label)
         self._key_labels = key_label_map(factory.dimension_names(config))
-        self._guided = self._make_guided(rounds) if guided else None
+        self._guided = self._make_guided(rounds, protocol) if guided else None
         self._cue = self._make_cue() if guided else None
         self._last_guided_key: tuple | None = None
         # ガイド時は必ず録画し、表示はアプリ側が指示画面ごと描く。
@@ -50,10 +51,12 @@ class App:
         self._gui = self._feedback.get("window", True)
 
     @staticmethod
-    def _make_guided(rounds: int):
-        from .guided import DEFAULT_PROMPTS, GuidedSession
+    def _make_guided(rounds: int, protocol: str):
+        from .guided import PROTOCOLS, GuidedSession
 
-        return GuidedSession(DEFAULT_PROMPTS, rounds)
+        if protocol not in PROTOCOLS:
+            raise ValueError(f"未知の protocol: {protocol}（{'/'.join(PROTOCOLS)} のいずれか）")
+        return GuidedSession(PROTOCOLS[protocol], rounds)
 
     def _make_cue(self):
         from .feedback.cue import CuePlayer
@@ -165,6 +168,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--video", default=None, help="カメラの代わりに動画ファイルを使う")
     parser.add_argument("--label", default="", help="録画時の正解ラベル（評価用）。例: drowsiness")
     parser.add_argument("--guided", action="store_true", help="ガイド付き収録モード（指示に従う）")
+    parser.add_argument(
+        "--protocol",
+        default="acted",
+        help="ガイドの指示セット。acted=演技（眠気・注意逸脱）/ stress=負荷をかけて誘発。"
+        "stress は 1 周 6 分半あるので --rounds 1 で足りる",
+    )
     parser.add_argument("--rounds", type=int, default=3, help="ガイド収録の周回数（既定: 3）")
     parser.add_argument("--subject", default="", help="被験者ID（人ごとの評価に使う）")
     args = parser.parse_args(argv)
@@ -176,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         video=args.video,
         label=args.label,
         guided=args.guided,
+        protocol=args.protocol,
         rounds=args.rounds,
         subject=args.subject,
     ).run()
