@@ -4,7 +4,7 @@ import pytest
 from _helpers import FakeHistory, make_observation
 
 from alertness.classifier.ml_based import MLClassifier
-from alertness.contracts import Features, Level
+from alertness.contracts import CalibrationProfile, Features, Level, Observation, Pose
 
 
 class _StubModel:
@@ -144,6 +144,49 @@ def test_window_pads_when_history_is_short():
     clf.assess(_history_obs([7, 8]))
 
     assert model.seen_x == [[[7.0], [7.0], [7.0], [8.0]]]
+
+
+def test_rest_centering_subtracts_baseline_when_flagged():
+    # rest_centered の bundle は、profile の安静基準を引いてからモデルに渡す。
+    model = _StubModel("none")
+    bundle = {
+        "models": {"label_stress": model},
+        "features": ["hr_bpm", "eyeSquintLeft"],
+        "rest_centered": True,
+    }
+    clf = MLClassifier(bundle)
+    profile = CalibrationProfile(
+        ear_open_baseline=0.3,
+        mar_neutral=0.0,
+        head_pose_neutral=Pose(0.0, 0.0, 0.0),
+        gaze_center=(0.5, 0.5),
+        face_scale=1.0,
+        baselines={"hr_bpm": 70.0, "eyeSquintLeft": 0.5},
+    )
+    obs = make_observation(Features(values={"hr_bpm": 82.0, "eyeSquintLeft": 0.6}, timestamp=1.0))
+    obs = Observation(obs.frame, obs.landmarks, obs.features, obs.history, profile)
+    clf.assess(obs)
+
+    assert model.seen_x == [[12.0, pytest.approx(0.1)]]  # 82-70, 0.6-0.5
+
+
+def test_no_centering_when_flag_absent():
+    # rest_centered が無い bundle は、profile に基準があっても引かない（絶対値のまま）。
+    model = _StubModel("none")
+    clf = MLClassifier(_bundle({"label_stress": model}, ["hr_bpm"]))
+    profile = CalibrationProfile(
+        ear_open_baseline=0.3,
+        mar_neutral=0.0,
+        head_pose_neutral=Pose(0.0, 0.0, 0.0),
+        gaze_center=(0.5, 0.5),
+        face_scale=1.0,
+        baselines={"hr_bpm": 70.0},
+    )
+    obs = make_observation(Features(values={"hr_bpm": 82.0}, timestamp=1.0))
+    obs = Observation(obs.frame, obs.landmarks, obs.features, obs.history, profile)
+    clf.assess(obs)
+
+    assert model.seen_x == [[82.0]]
 
 
 def test_missing_features_become_present_flags():

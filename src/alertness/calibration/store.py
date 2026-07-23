@@ -24,6 +24,7 @@ def save_profile(profile: CalibrationProfile, path: str | Path) -> None:
         },
         "gaze_center": list(profile.gaze_center),
         "face_scale": profile.face_scale,
+        "baselines": dict(profile.baselines),
         "user_id": profile.user_id,
         "schema_version": profile.schema_version,
     }

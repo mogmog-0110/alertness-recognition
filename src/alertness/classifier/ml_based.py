@@ -84,6 +84,9 @@ class MLClassifier:
         self._features = list(features)
         # 入力の形。1 ならフレーム単位、2以上なら直近 window フレームの行列を渡す。
         self._window = max(1, int(bundle.get("window") or window_of(self._models)))
+        # 学習が安静基準で中心化されているか。されているなら推論も同じ中心化を通す。
+        # 学習側(rest_basis)と推論側(profile.baselines)で対称に「安静からの差」にする。
+        self._rest_centered = bool(bundle.get("rest_centered"))
         # 軸の向き（高いほど良い軸か）は config 側の取り決めなので、rule と同じ spec を使う。
         self._specs = {s.name: s for s in (dimensions or ())}
 
@@ -102,11 +105,12 @@ class MLClassifier:
 
     def _sample(self, obs: Observation) -> list:
         """モデルへ渡す1件分の入力。window=1 なら特徴量ベクトル、2以上ならその行列。"""
+        baselines = obs.profile.baselines if self._rest_centered else {}
         if self._window == 1:
-            return self._vector(obs.features)
-        return self._sequence(obs)
+            return self._vector(obs.features, baselines)
+        return self._sequence(obs, baselines)
 
-    def _sequence(self, obs: Observation) -> list[list[float]]:
+    def _sequence(self, obs: Observation, baselines: Mapping[str, float]) -> list[list[float]]:
         """直近 window フレームの特徴量を古い順に並べる。
 
         履歴が足りない起動直後は、最も古い行を複製して前に詰める。判定を止めてしまうと、
@@ -114,21 +118,24 @@ class MLClassifier:
         """
         fps = obs.history.fps if obs.history.fps > 0 else 30.0
         span = self._window / fps * _HISTORY_MARGIN
-        rows = [self._vector(f) for f in obs.history.recent(span)][-self._window :]
+        rows = [self._vector(f, baselines) for f in obs.history.recent(span)][-self._window :]
         if not rows:
-            rows = [self._vector(obs.features)]
+            rows = [self._vector(obs.features, baselines)]
         return [rows[0]] * (self._window - len(rows)) + rows
 
-    def _vector(self, features: Features) -> list[float]:
+    def _vector(self, features: Features, baselines: Mapping[str, float]) -> list[float]:
         # 欠損は 0.0（学習側の fillna(0.0) と揃える）。列順は bundle に従う。
-        return [self._value(features, name) for name in self._features]
+        return [self._value(features, name, baselines) for name in self._features]
 
-    def _value(self, features: Features, name: str) -> float:
+    def _value(self, features: Features, name: str, baselines: Mapping[str, float]) -> float:
         if name.endswith(_PRESENT_SUFFIX):
             base = name[: -len(_PRESENT_SUFFIX)]
             return 0.0 if math.isnan(features.get(base, float("nan"))) else 1.0
         value = features.get(name, 0.0)
-        return 0.0 if math.isnan(value) else value
+        if math.isnan(value):
+            return 0.0
+        # 学習が安静中心化されていれば、その人の安静基準を引いて同じ空間にそろえる。
+        return value - baselines.get(name, 0.0)
 
     def _as_dimension(self, name: str, score: float, level: Level) -> Dimension:
         # 反転する軸（集中など）は、予測した段階ではなく警告の強さから段階を引き直す。

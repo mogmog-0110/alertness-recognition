@@ -49,9 +49,21 @@ class StatisticalCalibrator:
             ),
             gaze_center=(self._median("gaze_x", 0.5), self._median("gaze_y", 0.5)),
             face_scale=self._median("face_scale", 1.0),
+            baselines=self._baselines(),
         )
 
     def _median(self, key: str, default: float) -> float:
         values = [f.get(key) for f in self._samples]
         values = [v for v in values if not math.isnan(v)]
         return float(np.median(values)) if values else default
+
+    def _baselines(self) -> dict[str, float]:
+        # 安静時に観測できた特徴量ごとの中央値。ML経路が「その人の平常からの差」を取るのに
+        # 使う。キャリブ中に一度でも値が出た特徴だけを持つ（hr は起動直後は出ないことが多い）。
+        keys = {k for f in self._samples for k in f.values}
+        baselines = {}
+        for key in keys:
+            values = [f.get(key) for f in self._samples if not math.isnan(f.get(key))]
+            if values:
+                baselines[key] = float(np.median(values))
+        return baselines
