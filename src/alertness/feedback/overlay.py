@@ -17,6 +17,7 @@ from ..features import landmark_ids as ids
 from ..features.rppg import forehead_roi_box
 
 WINDOW_NAME = "Alertness"
+_PANEL_WIDTH = 190  # debug 表示の板の幅（右下）
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 # レベルごとの色（BGR）
@@ -224,11 +225,12 @@ def _draw_alert(img: np.ndarray) -> None:
 
 
 def _draw_features(img: np.ndarray, obs: Observation) -> None:
-    # いま使っている特徴量を全部、数値つきで右下に右寄せで出す。
+    # いま使っている特徴量を全部、数値つきで右下に出す。
+    # 文字は縁取りせず、後ろに半透明の板を敷いて読ませる。特徴量が増えて行数が
+    # 3倍近くになり、1行2回の描画（縁取り＋本体）だけで 18ms/フレーム 掛かっていたため。
     f = obs.features
     lines = ["-- features --"]
-    for key in sorted(f.values):
-        lines.append(f"{key}: {f.values[key]:.3f}")
+    lines += [f"{key}: {f.values[key]:.3f}" for key in sorted(f.values)]
     lines.append(f"ear_base: {obs.profile.ear_open_baseline:.3f}")
     lines.append(f"face: {'yes' if f.face_present else 'no'}")
     measured = getattr(obs.history, "measured_fps", None)
@@ -236,7 +238,11 @@ def _draw_features(img: np.ndarray, obs: Observation) -> None:
         lines.append(f"fps: {measured:.1f}")  # 要求値ではなく実際に流れている値
 
     h, w = img.shape[:2]
-    y0 = h - 16 * len(lines) - 8
+    step = 16
+    y0 = h - step * len(lines) - 8
+    x0 = w - _PANEL_WIDTH - 12
+    panel = img[max(0, y0 - 14) : h, max(0, x0 - 8) : w]
+    if panel.size:
+        panel[:] = cv2.addWeighted(panel, 0.35, np.zeros_like(panel), 0.65, 0)
     for i, line in enumerate(lines):
-        (text_w, _), _ = cv2.getTextSize(line, _FONT, 0.45, 1)
-        _text(img, line, (w - text_w - 12, y0 + i * 16), 0.45, (255, 255, 255))
+        cv2.putText(img, line, (x0, y0 + i * step), _FONT, 0.45, (235, 235, 235), 1, cv2.LINE_AA)
