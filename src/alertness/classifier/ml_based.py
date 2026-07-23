@@ -9,6 +9,7 @@ cue は使わず、features を「学習時に保存した列順」でベクト�
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -17,6 +18,11 @@ from .states import DimensionSpec, alarm_of, level_for
 
 # 学習のターゲット列 "label_<軸>" と、本体の評価軸名 "<軸>" をつなぐ接頭辞。
 _AXIS_PREFIX = "label_"
+
+# 「その特徴量に値があったか」を表す列の接尾辞。学習側(alertness-colab)と同じ規約。
+# rPPG のように欠けるのが普通の特徴は、欠損を 0 で埋めるだけだと心拍0bpm のような
+# 実在しない値になるので、値の有無そのものを別の特徴として渡している。
+_PRESENT_SUFFIX = "_present"
 
 _LEVEL_BY_NAME = {
     "none": Level.NONE,
@@ -60,13 +66,20 @@ class MLClassifier:
 
     def assess(self, obs: Observation) -> Assessment:
         # 欠損は 0.0（学習側の fillna(0.0) と揃える）。列順は bundle に従う。
-        vector = [obs.features.get(name, 0.0) for name in self._features]
+        vector = [self._value(obs, name) for name in self._features]
         dims: dict[str, Dimension] = {}
         for target, model in self._models.items():
             name = _dimension_name(target)
             level, score = self._predict(model, vector)
             dims[name] = self._as_dimension(name, score, level)
         return Assessment(dimensions=dims, timestamp=obs.features.timestamp)
+
+    def _value(self, obs: Observation, name: str) -> float:
+        if name.endswith(_PRESENT_SUFFIX):
+            base = name[: -len(_PRESENT_SUFFIX)]
+            return 0.0 if math.isnan(obs.features.get(base, float("nan"))) else 1.0
+        value = obs.features.get(name, 0.0)
+        return 0.0 if math.isnan(value) else value
 
     def _as_dimension(self, name: str, score: float, level: Level) -> Dimension:
         # 反転する軸（集中など）は、予測した段階ではなく警告の強さから段階を引き直す。
