@@ -3,6 +3,11 @@
 起動直後の「楽な姿勢で正面・開眼」を基準にする。次の2点で頑健にしている:
 - カメラ起動直後のウォームアップ frame は捨てる（露出調整中で値が暴れるため）。
 - 平均ではなく中央値を使う（瞬きなどの外れ値に引っ張られないため）。
+
+幾何（EAR・姿勢・視線）の基準は数秒で取れるが、rPPG の心拍は窓（既定20秒）が満ちるまで
+出ない。安静中心化(ML経路)は心拍もその人の安静からの差にしたいので、心拍を必要とする
+ときは、心拍が現れるまでキャリブを延ばせるようにする（キャリブ中はずっと安静なので、
+そこで取れた心拍がそのまま安静基準になる）。心拍が出ないまま上限に達したら諦めて確定する。
 """
 
 from __future__ import annotations
@@ -16,10 +21,20 @@ from ..contracts import CalibrationProfile, Features, Observation, Pose
 
 class StatisticalCalibrator:
     def __init__(
-        self, duration_seconds: float = 3.0, fps: float = 30.0, warmup_seconds: float = 0.7
+        self,
+        duration_seconds: float = 3.0,
+        fps: float = 30.0,
+        warmup_seconds: float = 0.7,
+        require_keys: tuple[str, ...] = (),
+        max_seconds: float = 0.0,
     ) -> None:
         self._needed = max(5, int(duration_seconds * fps))
         self._warmup = int(warmup_seconds * fps)
+        # 心拍など、遅れて出る特徴を安静基準に含めたいときに指定する。出そろうまで確定を待つ。
+        self._require = tuple(require_keys)
+        self._min_key = max(3, int(0.5 * fps))  # 必要な特徴を安定と見なす最小サンプル数
+        # 待つ上限。心拍が出ないカメラ/環境で永遠に待たないための打ち切り。0 なら待たない。
+        self._max = int(max_seconds * fps) if max_seconds > 0 else 0
         self._seen = 0
         self._samples: list[Features] = []
 
@@ -33,7 +48,17 @@ class StatisticalCalibrator:
 
     @property
     def progress(self) -> float:
-        return min(1.0, len(self._samples) / self._needed)
+        if self._max and len(self._samples) >= self._max:
+            return 1.0  # 上限に達した。必要な特徴が出そろわなくても確定する。
+        frame_ratio = len(self._samples) / self._needed
+        if not self._require:
+            return min(1.0, frame_ratio)
+        # 幾何が揃い、かつ要求した特徴（心拍など）も最小数そろって初めて完了。
+        key_ratio = min(self._key_count(key) / self._min_key for key in self._require)
+        return min(1.0, frame_ratio, key_ratio)
+
+    def _key_count(self, key: str) -> int:
+        return sum(1 for f in self._samples if not math.isnan(f.get(key)))
 
     def finalize(self) -> CalibrationProfile:
         if not self._samples:
