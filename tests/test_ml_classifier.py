@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from _helpers import make_observation
+from _helpers import FakeHistory, make_observation
 
 from alertness.classifier.ml_based import MLClassifier
 from alertness.contracts import Features, Level
@@ -107,6 +107,43 @@ def test_unknown_level_rejected():
     clf = MLClassifier(_bundle({"label_drowsiness": _NoProbaModel("sleepy")}, ["ear"]))
     with pytest.raises(ValueError, match="未知のレベル"):
         clf.assess(_obs({"ear": 0.1}))
+
+
+def _history_obs(ears, fps: float = 30.0):
+    """ear が 0,1,2... と増える履歴を作り、その最後のフレームを現在の観測にする。"""
+    frames = [Features(values={"ear": float(e)}, timestamp=i / fps) for i, e in enumerate(ears)]
+    return make_observation(frames[-1], FakeHistory(frames, fps))
+
+
+def test_window_defaults_to_one_frame():
+    # window を持たない bundle（SVM/RandomForest 等）は従来どおりフレーム単位。
+    model = _StubModel("none")
+    clf = MLClassifier(_bundle({"label_drowsiness": model}, ["ear"]))
+    clf.assess(_history_obs([1, 2, 3]))
+
+    assert clf.window == 1
+    assert model.seen_x == [[3.0]]  # 履歴があっても現在フレームだけ
+
+
+def test_window_builds_sequence_from_history():
+    # window>1（LSTM 等）は直近 window フレームを古い順に並べた行列を渡す。
+    model = _StubModel("high")
+    bundle = {"models": {"label_drowsiness": model}, "features": ["ear"], "window": 3}
+    clf = MLClassifier(bundle)
+    clf.assess(_history_obs([0, 1, 2, 3, 4]))
+
+    assert clf.window == 3
+    assert model.seen_x == [[[2.0], [3.0], [4.0]]]  # 末尾3フレーム、古い順
+
+
+def test_window_pads_when_history_is_short():
+    # 起動直後で履歴が足りないときは、最も古い行を複製して前に詰め、判定を止めない。
+    model = _StubModel("low")
+    bundle = {"models": {"label_drowsiness": model}, "features": ["ear"], "window": 4}
+    clf = MLClassifier(bundle)
+    clf.assess(_history_obs([7, 8]))
+
+    assert model.seen_x == [[[7.0], [7.0], [7.0], [8.0]]]
 
 
 def test_missing_features_become_present_flags():
