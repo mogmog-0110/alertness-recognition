@@ -44,9 +44,10 @@ def test_rejected_subject_never_extracts_video(tmp_path, monkeypatch):
     zip_path = root / "s9.zip"
     _make_zip(zip_path, "s9", "ctrl", cognitive=(2.0, 1.5))  # 下降 → スコア負
 
-    result = proc.process_subject(zip_path, {}, root, tmp_path / "out", keep_videos=False)
+    status, message = proc.process_subject(zip_path, {}, root, tmp_path / "out", keep_videos=False)
 
-    assert "不採用" in result
+    assert status == "rejected"
+    assert "不採用" in message
     assert not list((root / "s9").glob("*.avi"))  # 動画は1本も展開されていない
     assert (root / "s9" / "info_s9.txt").exists()  # 小さいファイルは展開済み
 
@@ -59,9 +60,10 @@ def test_already_ingested_subject_is_skipped(tmp_path):
     out = tmp_path / "out"
     (out / "s9__vid_s9_T1").mkdir(parents=True)  # 取り込み済みの跡
 
-    result = proc.process_subject(zip_path, {}, root, out, keep_videos=False)
-    assert "飛ばす" in result
-    assert not (root / "s9").exists()  # 触っていない（展開すらしない）
+    status, message = proc.process_subject(zip_path, {}, root, out, keep_videos=False)
+    assert status == "skipped"
+    assert "飛ばす" in message
+    assert not list((root / "s9").glob("*.avi"))  # 動画は展開されていない
 
 
 def test_accepted_subject_ingests_and_removes_video(tmp_path, monkeypatch):
@@ -81,10 +83,28 @@ def test_accepted_subject_ingests_and_removes_video(tmp_path, monkeypatch):
 
     monkeypatch.setattr(proc.conv, "convert_subject", fake_convert)
 
-    result = proc.process_subject(zip_path, {}, root, tmp_path / "out", keep_videos=False)
+    status, message = proc.process_subject(zip_path, {}, root, tmp_path / "out", keep_videos=False)
 
-    assert "取り込み 3 タスク" in result
+    assert status == "ingested"
+    assert "取り込み 3 タスク" in message
     assert not list((root / "s9").glob("*.avi"))  # 取り込み後、動画は削除された
+
+
+def test_skip_cleans_leftover_videos(tmp_path):
+    # 取り込み済みでも、前回の展開動画が残っていれば掃除する。
+    root = tmp_path / "UBFC-Phys"
+    (root / "s9").mkdir(parents=True)
+    for task in ("T1", "T2", "T3"):
+        (root / "s9" / f"vid_s9_{task}.avi").write_bytes(b"x" * 1024)
+    zip_path = root / "s9.zip"
+    _make_zip(zip_path, "s9", "test", cognitive=(2.0, 3.5))
+    out = tmp_path / "out"
+    (out / "s9__vid_s9_T1").mkdir(parents=True)
+
+    status, message = proc.process_subject(zip_path, {}, root, out, keep_videos=False)
+    assert status == "skipped"
+    assert "掃除" in message
+    assert not list((root / "s9").glob("*.avi"))  # 残っていた動画は消えた
 
 
 def test_accepted_subject_can_keep_video(tmp_path, monkeypatch):

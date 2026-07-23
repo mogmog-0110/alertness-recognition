@@ -10,13 +10,23 @@ sN.zip をフォルダに貯める）。この先――展開・被験者ふる�
 被験者ゲート（scenario と自己申告スコア）は info と selfReportedAnx だけで判定できる。
 これらは1被験者100KB弱なので、まず小さいファイルだけ展開してゲートに掛け、不採用なら
 14GB ある動画を展開しない。採用した被験者だけ動画を展開して取り込み、済んだら動画を消して
-容量を戻す（--keep-videos で残せる）。zip 自体は消さない（再取り込みの元として手元に残す）。
+容量を戻す（--keep-videos で残せる）。取り込み済みの被験者を再実行したときも、残っている
+展開動画があれば掃除する。
+
+## zip の後片付け（容量対策）
+
+CSV には生の幾何量と blendshape が全部入るので、一度取り込めば zip はほぼ不要。zip が
+再び要るのは rPPG 設定や検出器を変えて動画から取り直すときだけ。毎回の最後に「もう消して
+よい zip（取り込み済み or 不採用）」とその合計サイズを出す。--purge-zip を付けるとそれらを
+実際に消す（小さいファイルは残すのでゲートの再判定はできる）。手元に全 56 本を置くと 800GB
+超になるので、数本ずつダウンロード→処理→--purge-zip、を繰り返せばピーク容量を小さく保てる。
 
 ## 使い方
 
     python examples\\process_ubfc_phys.py                    :: data/UBFC-Phys の zip を順に処理
     python examples\\process_ubfc_phys.py --root D:\\ubfc      :: zip の置き場所を変える
     python examples\\process_ubfc_phys.py --keep-videos       :: 取り込み後も動画を残す
+    python examples\\process_ubfc_phys.py --purge-zip         :: 処理し終えた zip を消す
 """
 
 from __future__ import annotations
@@ -63,13 +73,22 @@ def _videos_of(subject_dir: Path) -> list[Path]:
 
 def process_subject(
     zip_path: Path, config: dict, root: Path, out_base: Path, *, keep_videos: bool
-) -> str:
-    """1本の zip を処理し、結果を一言で返す（skipped / rejected / ingested）。"""
-    subject = zip_path.stem  # s9.zip → s9
-    if _already_ingested(out_base, subject):
-        return f"{subject}: 取り込み済み。飛ばす"
+) -> tuple[str, str]:
+    """1本の zip を処理し、(状態, メッセージ) を返す。
 
+    状態は "ingested" / "rejected" / "skipped"。どれも zip はもう消してよい（"failed" だけ
+    残す）。呼び出し側はこの状態で片付ける zip を決める。
+    """
+    subject = zip_path.stem  # s9.zip → s9
     subject_dir = root / subject
+    if _already_ingested(out_base, subject):
+        # 済んでいるので飛ばすが、前回の展開動画が残っていれば掃除する。
+        removed = [v for v in _videos_of(subject_dir)]
+        for video in removed:
+            video.unlink()
+        note = f"（残っていた動画 {len(removed)} 本を掃除）" if removed else ""
+        return "skipped", f"{subject}: 取り込み済み。飛ばす{note}"
+
     subject_dir.mkdir(parents=True, exist_ok=True)
     _extract(zip_path, subject_dir, videos=False)  # まず小さいファイルだけ
 
@@ -77,7 +96,7 @@ def process_subject(
     anxiety = conv.read_anxiety(subject_dir / f"selfReportedAnx_{subject}.csv")
     reason = conv.induction_worked(info, anxiety)
     if reason:
-        return f"{subject}: 不採用（{reason}）。動画は展開しない"
+        return "rejected", f"{subject}: 不採用（{reason}）。動画は展開しない"
 
     manifests = conv.convert_subject(root, subject, Path("data/manifests"), force=False)
     _extract(zip_path, subject_dir, videos=True)  # 採用したので動画を展開
@@ -88,7 +107,7 @@ def process_subject(
         for video in _videos_of(subject_dir):
             video.unlink()
     tail = "" if keep_videos else "（動画は削除）"
-    return f"{subject}: 取り込み {len(manifests)} タスク{tail}"
+    return "ingested", f"{subject}: 取り込み {len(manifests)} タスク{tail}"
 
 
 def _summary(out_base: Path) -> str:
@@ -111,6 +130,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--config", default="config/default.yaml", help="設定ファイル")
     parser.add_argument("--out", default="runs/ingested", help="CSV出力先")
     parser.add_argument("--keep-videos", action="store_true", help="取り込み後も動画を残す")
+    parser.add_argument("--purge-zip", action="store_true", help="処理し終えた zip を削除する")
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -121,13 +141,38 @@ def main(argv: list[str]) -> int:
 
     config = load_config(args.config)
     out_base = Path(args.out)
+    done: list[Path] = []  # もう消してよい zip（取り込み済み or 不採用）
     for zip_path in zips:
         try:
-            print(process_subject(zip_path, config, root, out_base, keep_videos=args.keep_videos))
+            status, message = process_subject(
+                zip_path, config, root, out_base, keep_videos=args.keep_videos
+            )
+            print(message)
+            if status in ("ingested", "rejected", "skipped"):
+                done.append(zip_path)
         except Exception as exc:  # 1本の失敗で全体を止めない
             print(f"{zip_path.stem}: 失敗 - {exc}", file=sys.stderr)
+
     print(_summary(out_base))
+    _report_disk(done, purge=args.purge_zip)
     return 0
+
+
+def _report_disk(done: list[Path], *, purge: bool) -> None:
+    """処理し終えて消してよい zip を報告する。purge ならその場で消す。"""
+    if not done:
+        return
+    total_gb = sum(p.stat().st_size for p in done) / 1e9
+    if purge:
+        for zip_path in done:
+            zip_path.unlink()
+        print(f"処理済みの zip {len(done)} 本を削除しました（{total_gb:.0f}GB を確保）。")
+    else:
+        names = ", ".join(p.name for p in done)
+        print(
+            f"もう消してよい zip: {len(done)} 本 / 計 {total_gb:.0f}GB → {names}\n"
+            "  （--purge-zip で自動削除。CSV と小さいファイルは残るので再判定はできる）"
+        )
 
 
 if __name__ == "__main__":
