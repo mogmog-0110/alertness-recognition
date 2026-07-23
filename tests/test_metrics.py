@@ -39,3 +39,28 @@ def test_confusion_matrix():
 def test_format_scorecard_runs():
     s = metrics.scorecard(["awake"], ["awake"], ["awake"])
     assert "accuracy" in metrics.format_scorecard(s)
+
+
+def test_ordinal_mae_counts_stage_distance():
+    # high を medium と間違えれば1段、none と間違えれば3段。平均で 2 段ずれる。
+    mae = metrics.ordinal_mae(["high", "high"], ["medium", "none"])
+    assert mae == 2.0
+
+
+def test_adjacent_accuracy_allows_one_stage_off():
+    # medium→low(1段) は許容、medium→none(2段) は不可 → 1/2。
+    acc = metrics.adjacent_accuracy(["medium", "medium"], ["low", "none"])
+    assert acc == 0.5
+
+
+def test_ordinal_metrics_none_for_non_stage_labels():
+    # 段階でないラベル（awake/drowsiness）では順序を測れないので None。
+    assert metrics.ordinal_mae(["awake"], ["drowsiness"]) is None
+    assert metrics.adjacent_accuracy(["awake"], ["drowsiness"]) is None
+
+
+def test_scorecard_includes_ordinal_for_stage_labels():
+    stages = ["none", "low", "medium", "high"]
+    s = metrics.scorecard(["none", "high"], ["low", "medium"], stages, negative_label="none")
+    assert s["ordinal_mae"] == 1.0  # none→low=1, high→medium=1
+    assert s["adjacent_accuracy"] == 1.0
