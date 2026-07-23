@@ -4,9 +4,9 @@
 
 pickle はオブジェクトを「クラスのモジュールパス」で記録する。学習側(alertness-colab)が
 自作の推定器クラスをそのまま model.pkl に漬け込むと、アプリ側で読むときに
-alertness-colab のコードが import できないと復元できない（実際 ModuleNotFoundError:
-No module named 'algorithms' で落ちた）。SVM や Random Forest は scikit-learn のクラス
-なので、両側に scikit-learn が入っていれば読める。自作クラスはそうはいかない。
+alertness-colab のコードを import できず ModuleNotFoundError で復元に失敗する。
+SVM や Random Forest は scikit-learn のクラスなので、両側に scikit-learn が入っていれば
+読める。自作クラスはそうはいかない。
 
 そこで時系列モデルは、クラスではなく**素のデータ**として bundle に載せる。中身は
 TorchScript にしたネットワーク（バイト列）と、スケーラの統計量とクラス名だけ。
