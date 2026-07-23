@@ -32,6 +32,7 @@ CSV には生の幾何量と blendshape が全部入るので、一度取り込�
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -45,8 +46,28 @@ from alertness.ingest.runner import run_ingest
 SMALL_SUFFIXES = (".txt", ".csv")  # info / bvp / eda / selfReportedAnx。動画は .avi。
 
 
+def _is_complete(zip_path: Path) -> bool:
+    """ダウンロードが完了した健全な zip か。中身の目録が読めて動画が揃っていれば真。
+
+    Chrome/Chrono は途中は別名(.crdownload)で書き、完了時に sN.zip へ改名するので、
+    sN.zip が在る時点でほぼ完成しているが、改名直後や破損に備えて目録を確かめる。
+    目録は末尾にあるので、書きかけの zip は ZipFile を開く時点で失敗する。
+    """
+    try:
+        with zipfile.ZipFile(zip_path) as archive:
+            names = archive.namelist()
+    except (zipfile.BadZipFile, OSError):
+        return False
+    has_info = any(n.lower().endswith(".txt") for n in names)
+    videos = [n for n in names if n.lower().endswith(".avi")]
+    return has_info and len(videos) >= 3
+
+
 def _extract(zip_path: Path, dst_root: Path, *, videos: bool) -> None:
-    """zip の中身を dst_root/<subject>/ へ展開する。videos=False なら .avi を飛ばす。"""
+    """zip の中身を dst_root/<subject>/ へ展開する。videos=False なら .avi を飛ばす。
+
+    動画は数GBあるので、全体をメモリに読まずにストリームで書き出す。
+    """
     with zipfile.ZipFile(zip_path) as archive:
         for entry in archive.infolist():
             if entry.is_dir():
@@ -60,7 +81,7 @@ def _extract(zip_path: Path, dst_root: Path, *, videos: bool) -> None:
             if target.exists() and target.stat().st_size == entry.file_size:
                 continue  # 展開済みは飛ばす
             with archive.open(entry) as src, target.open("wb") as out:
-                out.write(src.read())
+                shutil.copyfileobj(src, out)
 
 
 def _already_ingested(out_base: Path, subject: str) -> bool:
@@ -76,8 +97,8 @@ def process_subject(
 ) -> tuple[str, str]:
     """1本の zip を処理し、(状態, メッセージ) を返す。
 
-    状態は "ingested" / "rejected" / "skipped"。どれも zip はもう消してよい（"failed" だけ
-    残す）。呼び出し側はこの状態で片付ける zip を決める。
+    状態は "ingested" / "rejected" / "skipped" / "pending"。前3つは zip をもう消してよい。
+    "pending"（ダウンロード中）と "failed"（処理中の例外）は消さずに残す。
     """
     subject = zip_path.stem  # s9.zip → s9
     subject_dir = root / subject
@@ -88,6 +109,9 @@ def process_subject(
             video.unlink()
         note = f"（残っていた動画 {len(removed)} 本を掃除）" if removed else ""
         return "skipped", f"{subject}: 取り込み済み。飛ばす{note}"
+
+    if not _is_complete(zip_path):
+        return "pending", f"{subject}: ダウンロード中/不完全。次回に回す"
 
     subject_dir.mkdir(parents=True, exist_ok=True)
     _extract(zip_path, subject_dir, videos=False)  # まず小さいファイルだけ
