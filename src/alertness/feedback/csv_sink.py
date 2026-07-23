@@ -2,6 +2,11 @@
 
 列は固定（FEATURE_COLUMNS）にしてある。フレームごとに値が欠けても列は変えず、
 学習時と推論時で同じ並びになるようにする。これが学習との契約になる。
+
+計算済みの値は選別せず全部書く。どれを学習に使うかは Colab 側の DEFAULT_FEATURES が
+選ぶので、列が増えてもアプリの判定には影響しない。一方で列を減らすと、映像を捨てた
+あとで「あの値も欲しかった」となったときに取り込みからやり直しになる。取り込みは
+1本あたり数分かかるうえ、公開データセットの映像は1被験者で十数GBある。
 """
 
 from __future__ import annotations
@@ -12,10 +17,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ..contracts import Assessment, Observation
+from ..features.extractor import BLENDSHAPE_COLUMNS
 from ..labeling import LabelState
 
-# 記録する特徴量の列（生 + 正規化）。順序と名前が学習との取り決め。
-FEATURE_COLUMNS = (
+# 生の幾何。キャリブ前の値なので、あとから別の基準で正規化し直せる。
+_GEOMETRY_COLUMNS = (
     "ear",
     "ear_left",
     "ear_right",
@@ -24,31 +30,32 @@ FEATURE_COLUMNS = (
     "yaw",
     "roll",
     "gaze_x",
+    "gaze_y",
+    "head_x",
+    "head_y",
     "face_scale",
+)
+
+# キャリブ基準で相対化した値。個人差・設置差を吸収してあるので学習にはこちらを使う。
+_NORMALIZED_COLUMNS = (
     "ear_norm",
     "mar_rel",
     "pitch_rel",
     "yaw_rel",
     "gaze_off",
+    "gaze_off_y",
     "normalize_version",
-    "jawOpen",
-    "eyeBlinkLeft",
-    "eyeBlinkRight",
-    # FACS の AU に対応する blendshape（AU4/AU7/AU24/AU15/AU6）。判定にも学習にも使う。
-    "browDownLeft",
-    "browDownRight",
-    "browInnerUp",
-    "eyeSquintLeft",
-    "eyeSquintRight",
-    "mouthPressLeft",
-    "mouthPressRight",
-    "mouthFrownLeft",
-    "mouthFrownRight",
-    "cheekSquintLeft",
-    "cheekSquintRight",
-    "hr_bpm",  # rPPG 由来（無効時は空）。stress モデルの特徴になり得る。
-    "rppg_quality",
-    "hrv_rmssd",  # rPPG 由来。良質な窓でだけ入る（機会的）ので欠けるのが普通。
+)
+
+# rPPG 由来。良質な窓でだけ入る（機会的）ので欠けるのが普通。
+_RPPG_COLUMNS = ("hr_bpm", "rppg_quality", "hrv_rmssd")
+
+# 記録する特徴量の列（生 + 正規化 + blendshape + rPPG）。順序と名前が学習との取り決め。
+FEATURE_COLUMNS = (
+    *_GEOMETRY_COLUMNS,
+    *_NORMALIZED_COLUMNS,
+    *BLENDSHAPE_COLUMNS,
+    *_RPPG_COLUMNS,
 )
 
 

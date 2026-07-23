@@ -47,7 +47,7 @@ class StatisticalCalibrator:
                 self._median("yaw", 0.0),
                 self._median("roll", 0.0),
             ),
-            gaze_center=(self._median("gaze_x", 0.5), 0.5),
+            gaze_center=(self._median("gaze_x", 0.5), self._median("gaze_y", 0.5)),
             face_scale=self._median("face_scale", 1.0),
         )
 

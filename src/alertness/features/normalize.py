@@ -32,6 +32,8 @@ def normalize_features(raw: Features, profile: CalibrationProfile, version: int 
     if "gaze_x" in v:
         # 画面中心を見たときの基準位置からのズレ。
         v["gaze_off"] = abs(v["gaze_x"] - profile.gaze_center[0])
+    if "gaze_y" in v:
+        v["gaze_off_y"] = abs(v["gaze_y"] - profile.gaze_center[1])
 
     v["normalize_version"] = float(version)
     return Features(values=v, timestamp=raw.timestamp, face_present=True)
