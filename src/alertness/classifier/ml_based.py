@@ -16,6 +16,9 @@ LSTM のように時系列窓を要るモデルは window>1 で、直近 window 
 
 窓の長さを推論側で決め打ちせず学習成果物に持たせるのは、列順(features)と同じ理由。
 学習と推論で食い違うと静かに壊れるので、取り決めは model.pkl 側に一本化する。
+
+時系列モデルは pickle されたクラスではなく素のデータとして入っている（学習側のコードを
+import せずに読めるようにするため）。復元は sequence_model が担う。
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..contracts import Assessment, Dimension, Features, Level, Observation
+from .sequence_model import load_models, window_of
 from .states import DimensionSpec, alarm_of, level_for
 
 # 学習のターゲット列 "label_<軸>" と、本体の評価軸名 "<軸>" をつなぐ接頭辞。
@@ -74,10 +78,12 @@ class MLClassifier:
             raise ValueError("model.pkl に軸ごとのモデル(models)が入っていません。")
         if not features:
             raise ValueError("model.pkl に特徴量の列順(features)が入っていません。")
-        self._models = dict(models)
+        # 時系列モデルはクラスではなく素のデータとして入っているので、ここで復元する
+        # （学習側のコードを import せずに読めるようにするため。sequence_model 参照）。
+        self._models = load_models(models)
         self._features = list(features)
         # 入力の形。1 ならフレーム単位、2以上なら直近 window フレームの行列を渡す。
-        self._window = max(1, int(bundle.get("window") or 1))
+        self._window = max(1, int(bundle.get("window") or window_of(self._models)))
         # 軸の向き（高いほど良い軸か）は config 側の取り決めなので、rule と同じ spec を使う。
         self._specs = {s.name: s for s in (dimensions or ())}
 
