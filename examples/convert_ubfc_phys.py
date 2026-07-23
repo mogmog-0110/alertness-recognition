@@ -177,7 +177,7 @@ def main(argv: list[str]) -> int:
         return 1
     subjects = args[1:] or [p.name for p in sorted(root.glob("s*")) if p.is_dir()]
     if not subjects:
-        print(f"{root} に被験者フォルダ(s1 等)がありません。zip を展開しましたか？", file=sys.stderr)
+        print(f"{root} に被験者フォルダ(s1 等)がありません。展開しましたか？", file=sys.stderr)
         return 1
 
     if "--bvp-report" in flags:
