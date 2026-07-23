@@ -49,6 +49,7 @@ class App:
         self._calibrating = calib.get("enabled", True)
         self._save_path = calib.get("save_path", "")
         self._gui = self._feedback.get("window", True)
+        self._window_width = self._feedback.get("window_width", 0)
 
     @staticmethod
     def _make_guided(rounds: int, protocol: str):
@@ -98,9 +99,7 @@ class App:
         assessment = self._pipeline.classify(obs)
         self._sinks.emit(obs, assessment)  # CSVへ記録（表示は下で行う）
         if self._gui:
-            import cv2
-
-            from .feedback import overlay
+            from .feedback import display, overlay
 
             image = overlay.render(
                 obs,
@@ -111,19 +110,17 @@ class App:
             overlay.draw_guided(
                 image, step.title, step.instruction, step.phase, step.remaining, step.progress
             )
-            cv2.imshow(overlay.WINDOW_NAME, image)
+            display.show(image, self._window_width)
         return step.phase == "done"
 
     def _calibrate(self, obs: Any) -> None:
         self._calibrator.collect(obs)
         if self._gui:
-            import cv2
+            from .feedback import display, overlay
 
-            from .feedback import overlay
-
-            cv2.imshow(
-                overlay.WINDOW_NAME,
+            display.show(
                 overlay.draw_calibration(obs.frame.image, self._calibrator.progress),
+                self._window_width,
             )
         if self._calibrator.progress >= 1.0:
             profile = self._calibrator.finalize()

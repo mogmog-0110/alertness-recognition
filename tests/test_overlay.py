@@ -67,17 +67,27 @@ def test_stress_meter_full_when_calibrated():
     assert _top_right_pixels(img) > 0
 
 
-def test_window_sink_scales_display_only():
-    """表示の拡大は撮影解像度を変えない（rPPG は実効fpsで決まるため撮影は軽いまま）。"""
+def test_display_sizes_window_once_and_keeps_aspect(monkeypatch):
+    """表示・キャリブ・ガイドの3経路が同じ窓設定を通ること（以前はガイドだけ効かなかった）。"""
     import numpy as np
 
-    from alertness.feedback.window_sink import OpenCvWindowSink
+    from alertness.feedback import display
 
-    sink = OpenCvWindowSink(window_width=1280)
-    small = np.zeros((480, 640, 3), dtype=np.uint8)
-    fitted = sink._fit(small)
-    assert fitted.shape[1] == 1280
-    assert fitted.shape[0] == 960  # 縦横比は保たれる
-    assert small.shape == (480, 640, 3)  # 元の画像は変わらない
+    calls: list[tuple] = []
+    monkeypatch.setattr(display.cv2, "namedWindow", lambda *a: calls.append(("named", *a)))
+    monkeypatch.setattr(display.cv2, "resizeWindow", lambda *a: calls.append(("resize", *a)))
+    monkeypatch.setattr(display.cv2, "imshow", lambda *a: calls.append(("imshow",)))
 
-    assert OpenCvWindowSink(window_width=0)._fit(small).shape == small.shape
+    display.reset()
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    display.show(image, 1280)
+    display.show(image, 1280)  # 2回目は大きさを触らない（手で変えた分を戻さない）
+
+    sized = [c for c in calls if c[0] == "resize"]
+    assert sized == [("resize", display.WINDOW_NAME, 1280, 960)]  # 縦横比は保たれる
+    assert sum(1 for c in calls if c[0] == "imshow") == 2
+
+    calls.clear()
+    display.reset()
+    display.show(image, 0)  # 0 なら撮影したままの大きさ
+    assert not [c for c in calls if c[0] in ("named", "resize")]
