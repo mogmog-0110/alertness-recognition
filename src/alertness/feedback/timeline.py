@@ -60,16 +60,21 @@ class DimensionTimeline:
         now = assessment.timestamp
         self._append(now, dim.alarm, dim.level, self._measured(assessment))
 
-        x, top = 16, img.shape[0] - (self.height + 34)
+        # 画面より広い帯は描けない。小さい映像でも収まるよう幅と高さを詰める。
+        width = min(self.width, img.shape[1] - 32)
+        height = min(self.height, max(12, img.shape[0] // 4))
+        if width < 32 or img.shape[0] < height + 40:
+            return
+        x, top = 16, img.shape[0] - (height + 34)
         _text(img, dim.display_name, (x, top - 6), 0.5, (255, 255, 255))
         _text(
             img,
             f"now {dim.level.name} {dim.alarm:.2f}",
-            (x + self.width - 118, top - 6),
+            (max(x, x + width - 118), top - 6),
             0.45,
             _LEVEL_COLORS[dim.level],
         )
-        self._draw_plot(img, x, top, now)
+        self._draw_plot(img, x, top, now, width, height)
 
     def _append(self, now: float, alarm: float, level: Level, measured: bool) -> None:
         self._samples.append((now, alarm, level, measured))
@@ -108,13 +113,15 @@ class DimensionTimeline:
                 measured[col] = measured[last]
         return alarms, levels, measured
 
-    def _draw_plot(self, img: np.ndarray, x: int, top: int, now: float) -> None:
+    def _draw_plot(
+        self, img: np.ndarray, x: int, top: int, now: float, width: int, height: int
+    ) -> None:
         # 枠線と目盛りの内側を作画領域にする。値0のとき枠線に隠れて見えなくなるのを防ぐ。
-        bottom = top + self.height - 1
+        bottom = top + height - 1
         inner_top, inner_bottom = top + 1, bottom - 1
-        inner_x, inner_w = x + 1, self.width - 1
+        inner_x, inner_w = x + 1, width - 1
         span = inner_bottom - inner_top
-        cv2.rectangle(img, (x, top), (x + self.width, bottom), (25, 25, 25), -1)
+        cv2.rectangle(img, (x, top), (x + width, bottom), (25, 25, 25), -1)
 
         alarms, levels, measured = self._columns(now)
         for col in range(inner_w):
@@ -141,7 +148,8 @@ class DimensionTimeline:
                 1,
             )
 
-        cv2.rectangle(img, (x, top), (x + self.width, bottom), (200, 200, 200), 1)
+        cv2.rectangle(img, (x, top), (x + width, bottom), (200, 200, 200), 1)
         _text(img, f"-{self.span_seconds / 60:.0f}min", (x, bottom + 14), 0.4, (170, 170, 170))
-        _text(img, "alert", (x + self.width + 4, alert_y + 4), 0.35, (150, 150, 150))
-        _text(img, "now", (x + self.width - 26, bottom + 14), 0.4, (170, 170, 170))
+        if x + width + 40 < img.shape[1]:
+            _text(img, "alert", (x + width + 4, alert_y + 4), 0.35, (150, 150, 150))
+        _text(img, "now", (max(x, x + width - 26), bottom + 14), 0.4, (170, 170, 170))

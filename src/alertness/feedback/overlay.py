@@ -18,7 +18,20 @@ from ..features import landmark_ids as ids
 from ..features.rppg import forehead_roi_box
 
 WINDOW_NAME = "Alertness"
-_PANEL_WIDTH = 190  # debug 表示の板の幅（右下）
+_PANEL_WIDTH = 190  # debug 表示の板の幅（右下）。基準倍率のときの値
+_REFERENCE_WIDTH = 1280.0  # この幅を倍率 1.0 とする
+
+
+def _scale(img: np.ndarray) -> float:
+    """描画の基準倍率。位置も大きさも画面幅に比例させる。
+
+    以前はすべて画素数で直書きしていたため、小さい映像だと左上の判定パネルと右下の
+    debug 表示が重なって文字が二重に見えていた（映像が縦に短いと debug 表示の開始位置が
+    負になり、はみ出した行が判定パネルの上に描かれる）。倍率で揃えれば起きない。
+    """
+    return min(1.5, max(0.4, img.shape[1] / _REFERENCE_WIDTH))
+
+
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 # レベルごとの色（BGR）
@@ -86,10 +99,15 @@ def render(
 
 def draw_calibration(image: np.ndarray, progress: float) -> np.ndarray:
     img = image.copy()
-    _text(img, "CALIBRATING", (20, 40), 0.9, (255, 255, 255))
-    _text(img, "look at the camera with eyes open", (20, 70), 0.6, (255, 255, 255))
-    cv2.rectangle(img, (20, 84), (20 + int(300 * progress), 104), (0, 200, 0), -1)
-    cv2.rectangle(img, (20, 84), (320, 104), (220, 220, 220), 1)
+    s = _scale(img)
+    x = round(20 * s)
+    bw = min(round(300 * s), max(20, img.shape[1] - round(40 * s)))
+    _text(img, "CALIBRATING", (x, round(40 * s)), max(0.4, 0.9 * s), (255, 255, 255))
+    hint = "look at the camera with eyes open"
+    _text(img, hint, (x, round(70 * s)), max(0.3, 0.6 * s), (255, 255, 255))
+    top, bottom = round(84 * s), round(104 * s)
+    cv2.rectangle(img, (x, top), (x + int(bw * progress), bottom), (0, 200, 0), -1)
+    cv2.rectangle(img, (x, top), (x + bw, bottom), (220, 220, 220), 1)
     return img
 
 
@@ -125,21 +143,30 @@ def _draw_mesh(img: np.ndarray, lm: FaceLandmarks) -> None:
             cv2.circle(img, (int(x), int(y)), 1, (0, 160, 0), -1)
 
 
+def panel_right(img: np.ndarray) -> int:
+    """左上の判定パネルの右端。他の要素がここに重ならないようにするために公開する。"""
+    s = _scale(img)
+    return round(16 * s) + round(220 * s)
+
+
 def _draw_panel(img: np.ndarray, assessment: Assessment) -> None:
     # バーの長さと段階は「警告の強さ」。集中のように高いほど良い軸は反転して表示される
     # （inattentive が伸びる＝集中していない）ので、元のスコアも併記する。
-    x, y, step = 16, 40, 66
+    s = _scale(img)
+    x, y, step = round(16 * s), round(40 * s), round(66 * s)
+    bar_w, bar_h = round(220 * s), max(6, round(14 * s))
     for dim in assessment.dimensions.values():
         color = _COLORS[dim.level]
-        _text(img, f"{dim.display_name}: {dim.level.name} {dim.alarm:.2f}", (x, y), 0.7, color)
-        bar_y = y + 12
-        cv2.rectangle(img, (x, bar_y), (x + 220, bar_y + 14), (60, 60, 60), -1)
-        cv2.rectangle(img, (x, bar_y), (x + int(220 * dim.alarm), bar_y + 14), color, -1)
+        label = f"{dim.display_name}: {dim.level.name} {dim.alarm:.2f}"
+        _text(img, label, (x, y), max(0.35, 0.7 * s), color)
+        bar_y = y + round(12 * s)
+        cv2.rectangle(img, (x, bar_y), (x + bar_w, bar_y + bar_h), (60, 60, 60), -1)
+        cv2.rectangle(img, (x, bar_y), (x + int(bar_w * dim.alarm), bar_y + bar_h), color, -1)
         notes = list(dim.contributing)
         if dim.alert_score is not None:
             notes.insert(0, f"{dim.name} {dim.score:.2f}")
         if notes:
-            _text(img, ",".join(notes), (x, y + 44), 0.5, color)
+            _text(img, ",".join(notes), (x, y + round(44 * s)), max(0.3, 0.5 * s), color)
         y += step
 
 
@@ -177,20 +204,23 @@ def _draw_stress_meter(img: np.ndarray, obs: Observation, assessment: Assessment
     color = (0, 200, 0) if done else (0, 180, 220)
 
     w = img.shape[1]
-    x, y, bw = w - 236, 60, 220
-    _text(img, "STRESS CALIB", (x, y), 0.55, (255, 255, 255))
-    bar_y = y + 12
-    cv2.rectangle(img, (x, bar_y), (x + int(bw * progress), bar_y + 14), color, -1)
-    cv2.rectangle(img, (x, bar_y), (x + bw, bar_y + 14), (220, 220, 220), 1)
+    s = _scale(img)
+    bw = round(220 * s)
+    x = max(panel_right(img) + 8, w - bw - round(16 * s))
+    y, bar_h = round(60 * s), max(6, round(14 * s))
+    _text(img, "STRESS CALIB", (x, y), max(0.3, 0.55 * s), (255, 255, 255))
+    bar_y = y + round(12 * s)
+    cv2.rectangle(img, (x, bar_y), (x + int(bw * progress), bar_y + bar_h), color, -1)
+    cv2.rectangle(img, (x, bar_y), (x + bw, bar_y + bar_h), (220, 220, 220), 1)
     label = "calibrated" if done else f"{progress * 100:.0f}%"
-    _text(img, label, (x, bar_y + 34), 0.5, color)
+    _text(img, label, (x, bar_y + round(34 * s)), max(0.3, 0.5 * s), color)
 
     # 0% から進まないときの理由。HRが出ていなければ rPPG 無効/未取得、出ているのに
     # 進まなければ信号品質が閾値未満（照明・動きを見直す合図）。
     if not done and progress <= 0.0:
         hr = obs.features.get("hr_bpm", float("nan"))
         hint = "low signal" if not math.isnan(hr) else "no rPPG signal"
-        _text(img, hint, (x, bar_y + 52), 0.42, (0, 170, 255))
+        _text(img, hint, (x, bar_y + round(52 * s)), max(0.3, 0.42 * s), (0, 170, 255))
 
 
 def draw_guided(
@@ -214,15 +244,20 @@ def draw_record_label(img: np.ndarray, label: str) -> None:
     # 録画中の現在ラベルを右上に大きく出す。ポーズ中のチラ見でも分かるように。
     if not label:
         return
+    s = _scale(img)
     text = f"REC: {label}"
-    (text_w, _), _ = cv2.getTextSize(text, _FONT, 0.8, 2)
-    _text(img, text, (img.shape[1] - text_w - 16, 32), 0.8, (0, 0, 255))
+    font = max(0.35, 0.8 * s)
+    (text_w, _), _ = cv2.getTextSize(text, _FONT, font, 2)
+    origin = (max(0, img.shape[1] - text_w - round(16 * s)), round(32 * s))
+    _text(img, text, origin, font, (0, 0, 255))
 
 
 def _draw_alert(img: np.ndarray) -> None:
     h, w = img.shape[:2]
-    cv2.rectangle(img, (0, 0), (w, 6), (0, 0, 255), -1)
-    _text(img, "ALERT", (w - 130, 36), 1.0, (0, 0, 255))
+    s = _scale(img)
+    cv2.rectangle(img, (0, 0), (w, max(2, round(6 * s))), (0, 0, 255), -1)
+    origin = (max(0, w - round(130 * s)), round(36 * s))
+    _text(img, "ALERT", origin, max(0.4, 1.0 * s), (0, 0, 255))
 
 
 def _draw_features(img: np.ndarray, obs: Observation) -> None:
@@ -237,14 +272,25 @@ def _draw_features(img: np.ndarray, obs: Observation) -> None:
     measured = getattr(obs.history, "measured_fps", None)
     if measured:
         lines.append(f"fps: {measured:.1f}")  # 要求値ではなく実際に流れている値
-    lines += profiling.summary()  # どの段が遅いか（cam=取り込み待ち / draw=描画）
+    lines += profiling.summary()  # feedback.profile が true のときだけ中身が入る
 
     h, w = img.shape[:2]
-    step = 16
-    y0 = h - step * len(lines) - 8
-    x0 = w - _PANEL_WIDTH - 12
-    panel = img[max(0, y0 - 14) : h, max(0, x0 - 8) : w]
+    s = _scale(img)
+    step = max(9, round(16 * s))
+    # 画面に入る行数だけ描く。入りきらないときは末尾（fps や face など見たい行）を残す。
+    fits = max(1, (h - round(24 * s)) // step)
+    if len(lines) > fits:
+        lines = lines[-fits:]
+    width = round(_PANEL_WIDTH * s)
+    # 左上の判定パネルには絶対に重ねない。
+    x0 = max(panel_right(img) + 8, w - width - round(12 * s))
+    y0 = max(round(14 * s), h - step * len(lines) - round(8 * s))
+    panel = img[max(0, y0 - step) : h, max(0, x0 - 8) : w]
     if panel.size:
         panel[:] = cv2.addWeighted(panel, 0.35, np.zeros_like(panel), 0.65, 0)
+    font = max(0.3, 0.45 * s)
     for i, line in enumerate(lines):
-        cv2.putText(img, line, (x0, y0 + i * step), _FONT, 0.45, (235, 235, 235), 1, cv2.LINE_AA)
+        y = y0 + i * step
+        if y >= h:
+            break
+        cv2.putText(img, line, (x0, y), _FONT, font, (235, 235, 235), 1, cv2.LINE_AA)

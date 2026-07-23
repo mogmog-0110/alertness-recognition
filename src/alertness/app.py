@@ -50,8 +50,8 @@ class App:
         self._save_path = calib.get("save_path", "")
         self._gui = self._feedback.get("window", True)
         self._window_width = self._feedback.get("window_width", 0)
-        # 段ごとの所要時間は debug 表示のときだけ測る（どこが遅いかの切り分け用）。
-        profiling.enable(self._feedback.get("debug", False))
+        # 段ごとの所要時間は明示的に頼まれたときだけ測る（fps が出ないときの切り分け用）。
+        profiling.enable(self._feedback.get("profile", False))
 
     @staticmethod
     def _make_guided(rounds: int, protocol: str):

@@ -144,6 +144,8 @@ feedback:
   timeline: stress            # 左下に推移の帯を出す軸名。空なら出さない
   timeline_seconds: 300       # 帯に収める時間（秒）
   debug: true                 # 画面右下に全特徴量を数値表示。しきい値調整時に使う
+  profile: false              # true にすると段ごとの所要時間(ms)も出す。fps が出ない
+                              # ときの切り分け用（cam=取り込み待ち/detect/judge/draw）
   alert_cooldown_seconds: 5.0
   audio: true                 # やわらかいチャイムで警告（Windows）
   sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted）
