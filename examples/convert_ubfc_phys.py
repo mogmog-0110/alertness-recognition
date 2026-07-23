@@ -15,10 +15,14 @@ UBFC-Phys は社会的ストレス誘発(TSST準拠)の実験で、眠気は誘�
 嘘になる。docs/annotation-guide.md の「区間には情報のある軸だけを付ければよい。付けなかった
 軸は未アノテであって none とは断定しない」に従い、stress だけを付ける。
 
-## アノテ規約: 実験プロトコルから写す
+## アノテ規約: 実験条件から写す
 
 ラベルは実験条件そのものから写す。UBFC-Phys は TSST に準拠した設計で、
 T1=安静 / T2=スピーチ / T3=暗算 という誘発条件自体がデータセットの根拠になる。
+
+難易度も段階に反映する。このデータセットは難易度2水準(test/ctrl)を被験者へランダムに
+割り当てており、同じタスクでも掛かる負荷が違う。段階を難易度で分けると4段階すべてが
+埋まり、ctrl の被験者も捨てずに済む。
 
 生体信号(BVP)の HRV から段階を出す経路は取らない。E4 は手首装着なので、発話や体動の
 ある区間では腕の動きを拾って拍検出が崩れ、RMSSD が生理的にありえない桁まで跳ねる。
@@ -26,11 +30,12 @@ T1=安静 / T2=スピーチ / T3=暗算 という誘発条件自体がデータ�
 
 ## 被験者ゲート: 誘発が効いた被験者だけを使う
 
-プロトコルからラベルを写す以上、ストレスが実際に掛かっていない被験者を入れるとラベルが
-嘘になる。2つの条件で絞る:
+実験条件からラベルを写す以上、ストレスが実際に掛かっていない被験者を入れるとラベルが
+嘘になる。selfReportedAnx は CSAI-2 の3尺度（認知不安・身体不安・自信）を実験前後で
+測ったもので、認知不安と身体不安は上がるほど、自信は下がるほど負荷が掛かったことを示す。
 
-  - info の scenario が test（ctrl は難易度が低い側でストレスが上がりきらない可能性）
-  - selfReportedAnx の認知不安が 実験前 < 実験後（誘発が効いた自己申告の裏づけ）
+3つが揃って動くとは限らず、片方だけ動く被験者や、不安が上がりながら自信も上がる被験者が
+いる。1尺度だけで判定すると取りこぼすので、3つを合算した値で見る（induction_score）。
 
 ## 使い方
 
@@ -53,11 +58,19 @@ from alertness.ingest.mapping import segment, write_manifest
 FS = 64.0  # BVP のサンプリング周波数[Hz]。Empatica E4 の仕様。
 TASKS = ("T1", "T2", "T3")
 
-# アノテ規約: タスク → ストレスの段階。
-# T2(スピーチ)を最上位に置く。評価者の前での公開スピーチは TSST の中核的ストレッサで、
-# 暗算より強い反応を出すのが定説のため。段階に幅を持たせる意味でも T3 を medium にする。
+# アノテ規約: シナリオ(難易度) × タスク → ストレスの段階。
+# どの難易度でも T2(スピーチ)を T3(暗算)より上に置く。評価者の前での公開スピーチは
+# TSST の中核的ストレッサで、暗算より強い反応を出すのが定説のため。
+# ctrl は難易度が低い側なので、同じタスクでも一段軽い段階に写す。
 # ここを変えるときは docs/annotation-guide.md のストレスの表と必ず揃えること。
-TASK_STAGE = {"T1": "none", "T2": "high", "T3": "medium"}
+TASK_STAGE = {
+    "test": {"T1": "none", "T2": "high", "T3": "medium"},
+    "ctrl": {"T1": "none", "T2": "medium", "T3": "low"},
+}
+
+# 誘発が効いたと見なす自己申告スコアの下限。0 は「不安の上昇か自信の低下が差し引きで
+# 残っている」という最低限の線。厳しくするほど被験者は減るが、ラベルの確度は上がる。
+INDUCTION_MIN_SCORE = 0.0
 
 # 用途タグ。UBFC-Phys は着座の実験室環境で運転ではないので driving とは書かない。
 # stress は用途非依存の軸（colab の CONTEXT_FREE_AXES）なので、空でも学習に影響しない。
@@ -97,13 +110,27 @@ def read_anxiety(path: Path) -> dict[str, tuple[float, float]]:
     return {name: (float(row[0]), float(row[1])) for name, row in zip(names, table, strict=True)}
 
 
+def induction_score(anxiety: dict[str, tuple[float, float]]) -> float:
+    """自己申告(CSAI-2)の実験前後の変化を1つの値にする。正なら誘発が効いた向き。
+
+    認知不安・身体不安は上がるほど、自信は下がるほど負荷が掛かったことを示すので、
+    自信だけ符号を反転して足す。
+    """
+    def change(key: str) -> float:
+        pre, post = anxiety[key]
+        return post - pre
+
+    return change("cognitive") + change("somatic") - change("confidence")
+
+
 def induction_worked(info: dict[str, str], anxiety: dict[str, tuple[float, float]]) -> str:
     """ストレス誘発が効いた被験者か。効いていなければ理由を返す（効いていれば空文字）。"""
-    if info["scenario"].lower() != "test":
-        return f"scenario={info['scenario']}（ctrl は誘発が弱い側）"
-    pre, post = anxiety["cognitive"]
-    if post <= pre:
-        return f"認知不安が上がっていない（{pre:.3f} → {post:.3f}）"
+    scenario = info["scenario"].lower()
+    if scenario not in TASK_STAGE:
+        return f"未知のシナリオ: {info['scenario']}（{sorted(TASK_STAGE)} のいずれかであること）"
+    score = induction_score(anxiety)
+    if score <= INDUCTION_MIN_SCORE:
+        return f"自己申告に誘発の跡がない（合成スコア {score:+.2f}）"
     return ""
 
 
@@ -112,8 +139,10 @@ def convert_subject(root: Path, subject: str, out_dir: Path, *, force: bool) -> 
     subject_dir = root / subject
     info = read_info(subject_dir / f"info_{subject}.txt")
     anxiety = read_anxiety(subject_dir / f"selfReportedAnx_{subject}.csv")
-    pre, post = anxiety["cognitive"]
-    print(f"{subject} (scenario={info['scenario']}, 認知不安 {pre:.3f}→{post:.3f})")
+    print(
+        f"{subject} (scenario={info['scenario']}, "
+        f"自己申告スコア {induction_score(anxiety):+.2f})"
+    )
 
     reason = induction_worked(info, anxiety)
     if reason and not force:
@@ -122,6 +151,7 @@ def convert_subject(root: Path, subject: str, out_dir: Path, *, force: bool) -> 
     if reason:
         print(f"  ⚠ {reason} が、--force により続行します。")
 
+    stages = TASK_STAGE[info["scenario"].lower()]
     written = []
     for task in TASKS:
         # 区間の長さは BVP の標本数から出す（動画を開かずに秒数が分かる）。
@@ -131,9 +161,9 @@ def convert_subject(root: Path, subject: str, out_dir: Path, *, force: bool) -> 
             video=(subject_dir / f"vid_{subject}_{task}.avi").as_posix(),
             subject=subject,
             context=CONTEXT,
-            segments=[segment(0.0, duration, stress=TASK_STAGE[task])],
+            segments=[segment(0.0, duration, stress=stages[task])],
         )
-        print(f"  {task}: stress={TASK_STAGE[task]} (0.0〜{duration:.1f}s) → {path}")
+        print(f"  {task}: stress={stages[task]} (0.0〜{duration:.1f}s) → {path}")
         written.append(path)
     return written
 
