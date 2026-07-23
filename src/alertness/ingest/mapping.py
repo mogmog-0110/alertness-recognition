@@ -11,7 +11,7 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from .manifest import LEVELS, from_dict
+from .manifest import AXES, LEVELS, from_dict
 
 
 def ordinal_bin(value: float, thresholds: Sequence[float], levels: Sequence[str] = LEVELS) -> str:
@@ -29,8 +29,15 @@ def lookup(value: object, table: Mapping[object, str], default: str = "none") ->
     return table.get(value, default)
 
 
-def segment(start: float, end: float, drowsiness: str = "none", distraction: str = "none") -> dict:
-    return {"start": start, "end": end, "drowsiness": drowsiness, "distraction": distraction}
+def segment(start: float, end: float, **levels: str) -> dict:
+    """区間ラベルを1つ作る。付けたい軸だけキーワードで渡す（例: drowsiness="high"）。
+
+    渡さなかった軸は未アノテ（空）として扱われる。none を明示したいときだけ none を渡す。
+    """
+    unknown = set(levels) - set(AXES)
+    if unknown:
+        raise ValueError(f"未知の軸: {sorted(unknown)}（使えるのは {AXES}）")
+    return {"start": start, "end": end, **levels}
 
 
 def write_manifest(

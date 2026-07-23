@@ -9,13 +9,16 @@ def test_provider_resolves_axis_labels_by_time():
         "v.mp4",
         "s1",
         "study",
-        (Segment(0.0, 1.0, "none", "low"), Segment(1.0, 2.0, "high", "none")),
+        (
+            Segment(0.0, 1.0, {"drowsiness": "none", "distraction": "low"}),
+            Segment(1.0, 2.0, {"drowsiness": "high", "distraction": "none"}),
+        ),
     )
     provider = SegmentLabelProvider(manifest)
 
     provider.apply(0.5)
-    assert (provider.drowsiness, provider.distraction) == ("none", "low")
+    assert provider.levels == {"drowsiness": "none", "distraction": "low"}
     provider.apply(1.5)
-    assert (provider.drowsiness, provider.distraction) == ("high", "none")
+    assert provider.levels == {"drowsiness": "high", "distraction": "none"}
     provider.apply(9.0)
-    assert (provider.drowsiness, provider.distraction) == ("", "")
+    assert provider.levels == {}

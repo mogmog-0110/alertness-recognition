@@ -31,7 +31,10 @@ def test_collect_labels_skips_blank(tmp_path):
 
 def test_main_prints_scorecard(tmp_path, capsys):
     path = tmp_path / "p.csv"
-    _write(path, [{"label": "awake", "pred": "awake"}, {"label": "drowsiness", "pred": "drowsiness"}])
+    _write(
+        path,
+        [{"label": "awake", "pred": "awake"}, {"label": "drowsiness", "pred": "drowsiness"}],
+    )
     rc = main([str(path)])
     out = capsys.readouterr().out
     assert rc == 0

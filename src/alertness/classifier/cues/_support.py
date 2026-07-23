@@ -7,9 +7,9 @@ from collections.abc import Sequence
 from ...contracts import Observation
 
 
-def window_values(obs: Observation, key: str, seconds: float, default: float) -> tuple[
-    list[float], list[float]
-]:
+def window_values(
+    obs: Observation, key: str, seconds: float, default: float
+) -> tuple[list[float], list[float]]:
     """直近 seconds 秒ぶんの (時刻リスト, 値リスト) を返す。顔なしフレームは除く。"""
     frames = [f for f in obs.history.recent(seconds) if f.face_present]
     times = [f.timestamp for f in frames]
@@ -22,7 +22,7 @@ def trailing_true_seconds(times: Sequence[float], flags: Sequence[bool]) -> floa
     if not times or not flags or not flags[-1]:
         return 0.0
     start = times[-1]
-    for t, c in zip(reversed(times), reversed(flags)):
+    for t, c in zip(reversed(times), reversed(flags), strict=True):
         if not c:
             break
         start = t

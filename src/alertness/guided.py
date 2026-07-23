@@ -8,8 +8,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,52 @@ DEFAULT_PROMPTS = (
 )
 
 
+# ストレス収録用の指示。眠気・注意逸脱は「そう見える顔」を演じてもらえば足りるが、
+# ストレスは演技では心拍が動かないので、実際に負荷をかけて誘発するしかない。
+# 社会的評価 + 時間圧 + 暗算という組み合わせは TSST（Trier Social Stress Test）の骨格で、
+# UBFC-Phys など公開データセットのストレス区間もこの方式で作られている。
+# ここで付くラベルは「その区間でストレスをかけた」という条件であって、本人の内的状態の
+# 測定値ではない。学習・評価はその前提で扱うこと。
+STRESS_PROMPTS = (
+    Prompt(
+        label="awake",
+        title="安静（基準）",
+        instruction=(
+            "・楽な姿勢で画面をまっすぐ見る\n"
+            "・普通に呼吸する。話さない\n"
+            "・頭を動かさない（rPPG が壊れます）"
+        ),
+        hold_seconds=120.0,
+        ready_seconds=5.0,
+    ),
+    Prompt(
+        label="stress",
+        title="暗算（時間を計っています）",
+        instruction=(
+            "・1022 から 13 を引き続け、声に出す\n"
+            "・できるだけ速く。間違えたら 1022 から やり直し\n"
+            "・記録者は正誤を見ています\n"
+            "・頭は動かさない"
+        ),
+        hold_seconds=120.0,
+        ready_seconds=5.0,
+    ),
+    Prompt(
+        label="awake",
+        title="回復（安静に戻す）",
+        instruction="・楽にして画面を見る\n・普通に呼吸する。話さない\n・頭を動かさない",
+        hold_seconds=120.0,
+        ready_seconds=5.0,
+    ),
+)
+
+# --protocol で選ぶ指示セット。
+PROTOCOLS = {
+    "acted": DEFAULT_PROMPTS,  # 演技でよい軸（眠気・注意逸脱）
+    "stress": STRESS_PROMPTS,  # 実際に負荷をかけて誘発する軸（ストレス）
+}
+
+
 class GuidedSession:
     def __init__(self, prompts: Sequence[Prompt], rounds: int = 3) -> None:
         self._segments: list[tuple[float, float, str, Prompt]] = []
@@ -90,6 +136,7 @@ class GuidedSession:
             if start <= elapsed < end:
                 label = prompt.label if phase == "hold" else ""
                 title = prompt.title if phase == "hold" else f"次: {prompt.title}"
-                return GuidedStep(title, prompt.instruction, label, phase, end - elapsed,
-                                  elapsed / self._total)
+                return GuidedStep(
+                    title, prompt.instruction, label, phase, end - elapsed, elapsed / self._total
+                )
         return GuidedStep("完了", "おつかれさまでした", "", "done", 0.0, 1.0)

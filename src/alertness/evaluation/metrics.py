@@ -15,14 +15,14 @@ def confusion_matrix(
 ) -> list[list[int]]:
     index = {label: i for i, label in enumerate(labels)}
     matrix = [[0] * len(labels) for _ in labels]
-    for t, p in zip(y_true, y_pred):
+    for t, p in zip(y_true, y_pred, strict=True):
         matrix[index[t]][index[p]] += 1
     return matrix
 
 
 def _counts(y_true: Sequence[str], y_pred: Sequence[str], label: str) -> tuple[int, int, int]:
     tp = fp = fn = 0
-    for t, p in zip(y_true, y_pred):
+    for t, p in zip(y_true, y_pred, strict=True):
         if p == label and t == label:
             tp += 1
         elif p == label and t != label:
@@ -45,7 +45,7 @@ def precision_recall_f1(
 def accuracy(y_true: Sequence[str], y_pred: Sequence[str]) -> float:
     if not y_true:
         return 0.0
-    return sum(1 for t, p in zip(y_true, y_pred) if t == p) / len(y_true)
+    return sum(1 for t, p in zip(y_true, y_pred, strict=True) if t == p) / len(y_true)
 
 
 def macro_f1(y_true: Sequence[str], y_pred: Sequence[str], labels: Sequence[str]) -> float:
@@ -58,17 +58,15 @@ def false_alarm_rate(
     y_true: Sequence[str], y_pred: Sequence[str], negative_label: str = "awake"
 ) -> float:
     # 正常なのに警告を出した割合（誤警告）。
-    negatives = [(t, p) for t, p in zip(y_true, y_pred) if t == negative_label]
+    negatives = [(t, p) for t, p in zip(y_true, y_pred, strict=True) if t == negative_label]
     if not negatives:
         return 0.0
     return sum(1 for _, p in negatives if p != negative_label) / len(negatives)
 
 
-def miss_rate(
-    y_true: Sequence[str], y_pred: Sequence[str], negative_label: str = "awake"
-) -> float:
+def miss_rate(y_true: Sequence[str], y_pred: Sequence[str], negative_label: str = "awake") -> float:
     # 異常を見逃して正常と判定した割合（見逃し）。
-    positives = [(t, p) for t, p in zip(y_true, y_pred) if t != negative_label]
+    positives = [(t, p) for t, p in zip(y_true, y_pred, strict=True) if t != negative_label]
     if not positives:
         return 0.0
     return sum(1 for _, p in positives if p == negative_label) / len(positives)
@@ -106,6 +104,6 @@ def format_scorecard(s: dict) -> str:
         c = s["per_class"][label]
         lines.append(f"  {label:14} {c['precision']:.3f}    {c['recall']:.3f}   {c['f1']:.3f}")
     lines.append("confusion (rows=true / cols=pred): " + ", ".join(s["labels"]))
-    for label, row in zip(s["labels"], s["confusion"]):
+    for label, row in zip(s["labels"], s["confusion"], strict=True):
         lines.append(f"  {label:14} " + " ".join(f"{v:5d}" for v in row))
     return "\n".join(lines)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from . import factory
+from . import factory, profiling
 from .calibration.store import save_profile
 from .config import load_config
 from .labeling import LabelState, key_label_map
@@ -26,6 +26,7 @@ class App:
         video: str | None = None,
         label: str = "",
         guided: bool = False,
+        protocol: str = "acted",
         rounds: int = 3,
         subject: str = "",
     ) -> None:
@@ -33,7 +34,7 @@ class App:
         self._feedback = config.get("feedback", {})
         self._labels = LabelState(label)
         self._key_labels = key_label_map(factory.dimension_names(config))
-        self._guided = self._make_guided(rounds) if guided else None
+        self._guided = self._make_guided(rounds, protocol) if guided else None
         self._cue = self._make_cue() if guided else None
         self._last_guided_key: tuple | None = None
         # ガイド時は必ず録画し、表示はアプリ側が指示画面ごと描く。
@@ -48,12 +49,17 @@ class App:
         self._calibrating = calib.get("enabled", True)
         self._save_path = calib.get("save_path", "")
         self._gui = self._feedback.get("window", True)
+        self._window_width = self._feedback.get("window_width", 0)
+        # 段ごとの所要時間は明示的に頼まれたときだけ測る（fps が出ないときの切り分け用）。
+        profiling.enable(self._feedback.get("profile", False))
 
     @staticmethod
-    def _make_guided(rounds: int):
-        from .guided import DEFAULT_PROMPTS, GuidedSession
+    def _make_guided(rounds: int, protocol: str):
+        from .guided import PROTOCOLS, GuidedSession
 
-        return GuidedSession(DEFAULT_PROMPTS, rounds)
+        if protocol not in PROTOCOLS:
+            raise ValueError(f"未知の protocol: {protocol}（{'/'.join(PROTOCOLS)} のいずれか）")
+        return GuidedSession(PROTOCOLS[protocol], rounds)
 
     def _make_cue(self):
         from .feedback.cue import CuePlayer
@@ -71,30 +77,41 @@ class App:
 
     def run(self) -> None:
         try:
-            for frame in self._source.frames():
-                obs = self._pipeline.observe(frame)
+            frames = self._source.frames()
+            while True:
+                with profiling.stage("capture"):
+                    frame = next(frames, None)
+                if frame is None:
+                    break
+                with profiling.stage("observe"):
+                    obs = self._pipeline.observe(frame)
                 if self._calibrating:
-                    self._calibrate(obs)
+                    with profiling.stage("output"):
+                        self._calibrate(obs)
                 elif self._guided is not None:
                     if self._run_guided(obs):
                         break
                 else:
-                    self._sinks.emit(obs, self._pipeline.classify(obs))
+                    with profiling.stage("classify"):
+                        assessment = self._pipeline.classify(obs)
+                    with profiling.stage("output"):
+                        self._sinks.emit(obs, assessment)
                 if self._gui and self._handle_keys():
                     break
         finally:
             self._close()
 
     def _run_guided(self, obs: Any) -> bool:
-        step = self._guided.step(obs.frame.timestamp)
+        guided = self._guided
+        if guided is None:
+            return False
+        step = guided.step(obs.frame.timestamp)
         self._labels.value = step.label
         self._maybe_cue(step)
         assessment = self._pipeline.classify(obs)
         self._sinks.emit(obs, assessment)  # CSVへ記録（表示は下で行う）
         if self._gui:
-            import cv2
-
-            from .feedback import overlay
+            from .feedback import display, overlay
 
             image = overlay.render(
                 obs,
@@ -105,19 +122,17 @@ class App:
             overlay.draw_guided(
                 image, step.title, step.instruction, step.phase, step.remaining, step.progress
             )
-            cv2.imshow(overlay.WINDOW_NAME, image)
+            display.show(image, self._window_width)
         return step.phase == "done"
 
     def _calibrate(self, obs: Any) -> None:
         self._calibrator.collect(obs)
         if self._gui:
-            import cv2
+            from .feedback import display, overlay
 
-            from .feedback import overlay
-
-            cv2.imshow(
-                overlay.WINDOW_NAME,
+            display.show(
                 overlay.draw_calibration(obs.frame.image, self._calibrator.progress),
+                self._window_width,
             )
         if self._calibrator.progress >= 1.0:
             profile = self._calibrator.finalize()
@@ -162,6 +177,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--video", default=None, help="カメラの代わりに動画ファイルを使う")
     parser.add_argument("--label", default="", help="録画時の正解ラベル（評価用）。例: drowsiness")
     parser.add_argument("--guided", action="store_true", help="ガイド付き収録モード（指示に従う）")
+    parser.add_argument(
+        "--protocol",
+        default="acted",
+        help="ガイドの指示セット。acted=演技（眠気・注意逸脱）/ stress=負荷をかけて誘発。"
+        "stress は 1 周 6 分半あるので --rounds 1 で足りる",
+    )
     parser.add_argument("--rounds", type=int, default=3, help="ガイド収録の周回数（既定: 3）")
     parser.add_argument("--subject", default="", help="被験者ID（人ごとの評価に使う）")
     args = parser.parse_args(argv)
@@ -173,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
         video=args.video,
         label=args.label,
         guided=args.guided,
+        protocol=args.protocol,
         rounds=args.rounds,
         subject=args.subject,
     ).run()

@@ -34,6 +34,21 @@ FEATURE_COLUMNS = (
     "jawOpen",
     "eyeBlinkLeft",
     "eyeBlinkRight",
+    # FACS の AU に対応する blendshape（AU4/AU7/AU24/AU15/AU6）。判定にも学習にも使う。
+    "browDownLeft",
+    "browDownRight",
+    "browInnerUp",
+    "eyeSquintLeft",
+    "eyeSquintRight",
+    "mouthPressLeft",
+    "mouthPressRight",
+    "mouthFrownLeft",
+    "mouthFrownRight",
+    "cheekSquintLeft",
+    "cheekSquintRight",
+    "hr_bpm",  # rPPG 由来（無効時は空）。stress モデルの特徴になり得る。
+    "rppg_quality",
+    "hrv_rmssd",  # rPPG 由来。良質な窓でだけ入る（機会的）ので欠けるのが普通。
 )
 
 
@@ -64,10 +79,10 @@ class CsvRecorderSink:
         # cue ごとのスコアも残す。どの手がかりが効いた/誤発火したかを後で調べられる。
         for name in cue_names:
             fields.append(f"cue_{name}")
-        # label は旧・単一ラベル（ライブ収録の互換）。正準は軸別の段階ラベル。
+        # label は旧・単一ラベル（ライブ収録の互換）。正準は軸別の段階ラベル label_<軸>。
         fields.append("label")
-        fields.append("label_drowsiness")
-        fields.append("label_distraction")
+        self._label_columns = [f"label_{name}" for name in dimension_names]
+        fields.extend(self._label_columns)
         fields.append("context")
         # 余分なキーは無視し、欠けた列は空にする（列構成を固定するため）。
         self._writer = csv.DictWriter(
@@ -87,9 +102,11 @@ class CsvRecorderSink:
         row["session_id"] = self._session_id
         row["subject"] = self._subject
         row["label"] = self._labels.value
-        # 軸別ラベルは、対応する provider だけが持つ（無ければ空）。
-        row["label_drowsiness"] = getattr(self._labels, "drowsiness", "")
-        row["label_distraction"] = getattr(self._labels, "distraction", "")
+        # 軸別ラベルは、対応する provider だけが持つ（levels に無い軸は空＝未アノテ）。
+        levels = getattr(self._labels, "levels", {})
+        for column in self._label_columns:
+            axis = column[len("label_") :]
+            row[column] = levels.get(axis, "")
         row["context"] = self._context
         self._writer.writerow(row)
 

@@ -10,8 +10,25 @@ from .gaze import horizontal_gaze_ratio
 from .head_pose import estimate_pose
 from .mouth import mouth_aspect_ratio
 
-# blendshape から取り込む値（あくび・瞬きの補助）
-_BLENDSHAPES = ("jawOpen", "eyeBlinkLeft", "eyeBlinkRight")
+# blendshape から取り込む値。MediaPipe は 52 個すべてを計算しているので、取り出すのは
+# ただの転記で追加コストは無い。後半は FACS の AU に対応づけられているもので、
+# ストレスの手がかり（表情の緊張）に使う。browDown=AU4, eyeSquint=AU7, mouthPress=AU24。
+_BLENDSHAPES = (
+    "jawOpen",
+    "eyeBlinkLeft",
+    "eyeBlinkRight",
+    "browDownLeft",
+    "browDownRight",
+    "browInnerUp",
+    "eyeSquintLeft",
+    "eyeSquintRight",
+    "mouthPressLeft",
+    "mouthPressRight",
+    "mouthFrownLeft",
+    "mouthFrownRight",
+    "cheekSquintLeft",
+    "cheekSquintRight",
+)
 
 
 class FaceFeatureExtractor:

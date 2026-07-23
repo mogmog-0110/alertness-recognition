@@ -12,7 +12,7 @@ import cv2
 
 from ..contracts import Assessment, Level, Observation
 from ..labeling import LabelState
-from . import overlay
+from . import display, overlay
 from .alert import AudioAlert
 
 
@@ -25,20 +25,47 @@ class OpenCvWindowSink:
         debug: bool = False,
         sounds: Mapping[str, str] | None = None,
         labels: LabelState | None = None,
+        draw_mesh: bool = False,
+        stress_meter: bool = False,
+        timeline: str = "",
+        timeline_seconds: float = 300.0,
+        window_width: int = 0,
     ) -> None:
         self._draw_landmarks = draw_landmarks
+        self._draw_mesh = draw_mesh
+        self._stress_meter = stress_meter
         self._debug = debug
         self._labels = labels  # 録画ラベル表示用（録画中のみ渡される）
         self._alert = AudioAlert(alert_cooldown_seconds, audio, sounds)
+        self._timeline = self._make_timeline(timeline, timeline_seconds)
+        self._window_width = window_width  # 表示の幅。撮影解像度とは切り離してある
+
+    @staticmethod
+    def _make_timeline(name: str, seconds: float):
+        if not name:
+            return None
+        from .timeline import DimensionTimeline
+
+        return DimensionTimeline(name, span_seconds=seconds)
 
     def emit(self, obs: Observation, assessment: Assessment) -> None:
-        image = overlay.render(obs, assessment, self._draw_landmarks, self._debug)
+        image = overlay.render(
+            obs,
+            assessment,
+            self._draw_landmarks,
+            self._debug,
+            self._draw_mesh,
+            self._stress_meter,
+        )
+        if self._timeline is not None:
+            self._timeline.render(image, assessment)
         if self._labels is not None:
             overlay.draw_record_label(image, self._labels.value)
-        cv2.imshow(overlay.WINDOW_NAME, image)
+        display.show(image, self._window_width)
         for dim in assessment.dimensions.values():
             if dim.level >= Level.MEDIUM:
                 self._alert.trigger(dim.name)
 
     def close(self) -> None:
         cv2.destroyAllWindows()
+        display.reset()

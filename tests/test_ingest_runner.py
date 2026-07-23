@@ -30,11 +30,11 @@ class _Pipeline:
 class _Sink:
     def __init__(self, provider: SegmentLabelProvider) -> None:
         self._provider = provider
-        self.seen: list[tuple[str, str]] = []
+        self.seen: list[dict[str, str]] = []
 
     def emit(self, obs, assessment) -> None:
         # 書き出す瞬間の軸別ラベルを記録して、時刻→ラベルの配布を確かめる。
-        self.seen.append((self._provider.drowsiness, self._provider.distraction))
+        self.seen.append(dict(self._provider.levels))
 
 
 def test_write_rows_propagates_axis_labels_per_frame():
@@ -42,7 +42,10 @@ def test_write_rows_propagates_axis_labels_per_frame():
         "v.mp4",
         "s1",
         "study",
-        (Segment(0.0, 1.0, "none", "low"), Segment(1.0, 2.0, "high", "none")),
+        (
+            Segment(0.0, 1.0, {"drowsiness": "none", "distraction": "low"}),
+            Segment(1.0, 2.0, {"drowsiness": "high", "distraction": "none"}),
+        ),
     )
     provider = SegmentLabelProvider(manifest)
     sink = _Sink(provider)
@@ -51,9 +54,9 @@ def test_write_rows_propagates_axis_labels_per_frame():
 
     assert written == 5
     assert sink.seen == [
-        ("none", "low"),
-        ("none", "low"),
-        ("high", "none"),
-        ("high", "none"),
-        ("", ""),
+        {"drowsiness": "none", "distraction": "low"},
+        {"drowsiness": "none", "distraction": "low"},
+        {"drowsiness": "high", "distraction": "none"},
+        {"drowsiness": "high", "distraction": "none"},
+        {},
     ]

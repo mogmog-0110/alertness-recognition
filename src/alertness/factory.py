@@ -10,18 +10,22 @@ from __future__ import annotations
 from typing import Any
 
 from .classifier.classifier import CueClassifier
+from .classifier.cues.attention_buffer import AttentionBufferCue
 from .classifier.cues.blink import BlinkCue
 from .classifier.cues.eye_closure import EyeClosureCue
+from .classifier.cues.facial_tension import FacialTensionCue
 from .classifier.cues.gaze_off import GazeOffCue
+from .classifier.cues.gaze_scanning import GazeScanningCue
 from .classifier.cues.head_down import HeadDownCue
 from .classifier.cues.head_turn import HeadTurnCue
+from .classifier.cues.hr_elevation import HrElevationCue
 from .classifier.cues.yawn import YawnCue
 from .classifier.policies.rule_based import RuleBasedPolicy
-from .classifier.states import DimensionSpec
+from .classifier.states import ALERT_ON, COMBINE, DimensionSpec
 from .features.extractor import FaceFeatureExtractor
 from .labeling import LabelState
-from .ports import Classifier, FeedbackSink, FrameSource, LandmarkDetector
 from .pipeline import Pipeline
+from .ports import Classifier, FeedbackSink, FrameSource, LandmarkDetector
 from .temporal import TemporalContext
 
 # cue 名 → 実装。新しい cue はここに登録する。
@@ -32,6 +36,10 @@ _CUE_REGISTRY = {
     "head_down": HeadDownCue,
     "head_turn": HeadTurnCue,
     "gaze_off": GazeOffCue,
+    "gaze_scanning": GazeScanningCue,
+    "attention_buffer": AttentionBufferCue,
+    "hr_elevation": HrElevationCue,
+    "facial_tension": FacialTensionCue,
 }
 
 
@@ -43,7 +51,11 @@ def build_source(config: dict[str, Any], video: str | None = None) -> FrameSourc
         from .sources.webcam import WebcamSource
 
         return WebcamSource(
-            camera.get("index", 0), camera.get("width", 1280), camera.get("height", 720)
+            camera.get("index", 0),
+            camera.get("width", 1280),
+            camera.get("height", 720),
+            camera.get("target_fps", 0),
+            camera.get("threaded", True),
         )
     if stype == "video":
         from .sources.video_file import VideoFileSource
@@ -72,8 +84,21 @@ def build_detector(config: dict[str, Any]) -> LandmarkDetector:
 def _dimension_specs(config: dict[str, Any]) -> list[DimensionSpec]:
     specs = []
     for dim in config.get("assessment", {}).get("dimensions", []):
+        alert_on = str(dim.get("alert_on", "high"))
+        if alert_on not in ALERT_ON:
+            raise ValueError(f"{dim['name']}: alert_on は {'/'.join(ALERT_ON)} のいずれか。")
+        combine = str(dim.get("combine", "max"))
+        if combine not in COMBINE:
+            raise ValueError(f"{dim['name']}: combine は {'/'.join(COMBINE)} のいずれか。")
         specs.append(
-            DimensionSpec(dim["name"], dict(dim.get("levels", {})), tuple(dim.get("cues", [])))
+            DimensionSpec(
+                dim["name"],
+                dict(dim.get("levels", {})),
+                tuple(dim.get("cues", [])),
+                alert_on,
+                str(dim.get("alert_name", "")),
+                combine,
+            )
         )
     return specs
 
@@ -85,7 +110,10 @@ def build_classifier(config: dict[str, Any]) -> Classifier:
         # 学習済み model.pkl を読む判定器。cue は使わないので組み立てない。
         from .classifier.ml_based import MLClassifier, load_bundle
 
-        return MLClassifier(load_bundle(policy_cfg.get("model_path", "models/model.pkl")))
+        return MLClassifier(
+            load_bundle(policy_cfg.get("model_path", "models/model.pkl")),
+            _dimension_specs(config),
+        )
     if ptype != "rule_based":
         raise ValueError(f"未知の policy type: {ptype}")
 
@@ -109,6 +137,25 @@ def build_classifier(config: dict[str, Any]) -> Classifier:
     return CueClassifier(cues, policy)
 
 
+def build_rppg(config: dict[str, Any]):
+    # rPPG は既定で無効。stress の特徴が要るときだけ config で有効にする。
+    rcfg = config.get("rppg", {})
+    if not rcfg.get("enabled", False):
+        return None
+    from .features.rppg import RppgEstimator
+
+    fps = config.get("camera", {}).get("target_fps", 30)
+    return RppgEstimator(
+        fps=fps,
+        window_seconds=rcfg.get("window_seconds", 10.0),
+        min_bpm=rcfg.get("min_bpm", 42.0),
+        max_bpm=rcfg.get("max_bpm", 180.0),
+        hrv_min_quality=rcfg.get("hrv_min_quality", 0.25),
+        hrv_enabled=rcfg.get("hrv_enabled", False),
+        hrv_upsample=rcfg.get("hrv_upsample", 16),
+    )
+
+
 def build_pipeline(config: dict[str, Any]) -> Pipeline:
     fps = config.get("camera", {}).get("target_fps", 30)
     temporal = TemporalContext(max_seconds=60.0, fps=fps)
@@ -118,6 +165,7 @@ def build_pipeline(config: dict[str, Any]) -> Pipeline:
         classifier=build_classifier(config),
         temporal=temporal,
         normalize_version=config.get("normalize", {}).get("version", 1),
+        rppg=build_rppg(config),
     )
 
 
@@ -155,6 +203,11 @@ def build_sinks(
                 feedback.get("debug", False),
                 feedback.get("sounds", {}),
                 labels if recording else None,
+                feedback.get("face_mesh", False),
+                feedback.get("stress_meter", False),
+                feedback.get("timeline", ""),
+                feedback.get("timeline_seconds", 300.0),
+                feedback.get("window_width", 0),
             )
         )
     if recording:

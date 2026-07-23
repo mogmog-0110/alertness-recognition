@@ -6,8 +6,13 @@ from alertness.ingest.autocalibrate import estimate_profile
 
 def _row(ear: float) -> dict:
     return {
-        "ear": ear, "mar": 0.0, "pitch": 10.0, "yaw": 5.0,
-        "roll": 0.0, "gaze_x": 0.5, "face_scale": 100.0,
+        "ear": ear,
+        "mar": 0.0,
+        "pitch": 10.0,
+        "yaw": 5.0,
+        "roll": 0.0,
+        "gaze_x": 0.5,
+        "face_scale": 100.0,
     }
 
 

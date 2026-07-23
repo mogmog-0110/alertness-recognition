@@ -32,8 +32,9 @@ def _row_to_features(row: dict[str, str]) -> Features:
         except ValueError:
             continue
     face_present = (row.get("face_present") or "1") not in ("0", "")
-    return Features(values=values, timestamp=float(row.get("timestamp") or 0.0),
-                    face_present=face_present)
+    return Features(
+        values=values, timestamp=float(row.get("timestamp") or 0.0), face_present=face_present
+    )
 
 
 def _observation(features: Features, temporal: TemporalContext) -> Observation:

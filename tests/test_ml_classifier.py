@@ -80,9 +80,7 @@ def test_missing_feature_defaults_to_zero():
 def test_severity_uses_probability_expectation():
     classes = ["high", "low", "medium", "none"]  # 並びが順序と違っても正しく重み付く
     proba = [0.5, 0.0, 0.0, 0.5]  # high と none が半々 → 期待段階 1.5/3
-    clf = MLClassifier(
-        _bundle({"label_drowsiness": _StubModel("high", classes, proba)}, ["ear"])
-    )
+    clf = MLClassifier(_bundle({"label_drowsiness": _StubModel("high", classes, proba)}, ["ear"]))
     score = clf.assess(_obs({"ear": 0.1})).dimensions["drowsiness"].score
 
     assert score == pytest.approx(0.5)
@@ -109,3 +107,39 @@ def test_unknown_level_rejected():
     clf = MLClassifier(_bundle({"label_drowsiness": _NoProbaModel("sleepy")}, ["ear"]))
     with pytest.raises(ValueError, match="未知のレベル"):
         clf.assess(_obs({"ear": 0.1}))
+
+
+def test_missing_features_become_present_flags():
+    """rPPG のように欠ける特徴は、値だけでなく「あったか」も渡す。
+
+    欠損を 0 で埋めるだけだと、心拍0bpm という実在しない値を学習側に渡すことになる。
+    学習側(alertness-colab)が <列名>_present を作るので、推論も同じ規約で埋める。
+    """
+    import math
+
+    from alertness.classifier.ml_based import MLClassifier
+
+    seen: list[list[float]] = []
+
+    class _Model:
+        classes_ = ["none"]
+
+        def predict(self, rows):
+            seen.append(list(rows[0]))
+            return ["none"]
+
+    bundle = {
+        "models": {"label_stress": _Model()},
+        "features": ["ear_norm", "hr_bpm", "hr_bpm_present"],
+    }
+    classifier = MLClassifier(bundle)
+
+    classifier.assess(_obs({"ear_norm": 1.0, "hr_bpm": 72.0}))
+    assert seen[-1] == [1.0, 72.0, 1.0]  # 値があるので present=1
+
+    classifier.assess(_obs({"ear_norm": 1.0, "hr_bpm": float("nan")}))
+    assert seen[-1] == [1.0, 0.0, 0.0]  # NaN は 0 に埋めつつ present=0
+
+    classifier.assess(_obs({"ear_norm": 1.0}))
+    assert seen[-1] == [1.0, 0.0, 0.0]  # 列そのものが無くても同じ扱い
+    assert not any(math.isnan(v) for row in seen for v in row)

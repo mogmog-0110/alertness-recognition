@@ -9,10 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import cv2
-import mediapipe as mp
+import mediapipe as mp  # type: ignore[import]
 import numpy as np
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision
+from mediapipe.tasks import python as mp_python  # type: ignore[import]
+from mediapipe.tasks.python import vision  # type: ignore[import]
 
 from ..contracts import FaceLandmarks, Frame
 

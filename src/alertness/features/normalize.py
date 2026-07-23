@@ -14,9 +14,7 @@ def _wrap_deg(deg: float) -> float:
     return ((deg + 180.0) % 360.0) - 180.0
 
 
-def normalize_features(
-    raw: Features, profile: CalibrationProfile, version: int = 1
-) -> Features:
+def normalize_features(raw: Features, profile: CalibrationProfile, version: int = 1) -> Features:
     if not raw.face_present:
         return raw
 
