@@ -55,6 +55,7 @@ def build_source(config: dict[str, Any], video: str | None = None) -> FrameSourc
             camera.get("width", 1280),
             camera.get("height", 720),
             camera.get("target_fps", 0),
+            camera.get("threaded", True),
         )
     if stype == "video":
         from .sources.video_file import VideoFileSource

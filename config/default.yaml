@@ -12,6 +12,9 @@ camera:
   width: 1280
   height: 720
   target_fps: 30
+  threaded: true              # 取り込みを別スレッドにして、カメラ待ちと処理を重ねる。
+                              # 同じスレッドで回すと1周期が「待ち+処理」になり、30fpsの
+                              # カメラで処理25msなら58ms=17fpsに落ちる。false で従来動作。
 
 source:
   type: webcam          # webcam / video

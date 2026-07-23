@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from . import factory
+from . import factory, profiling
 from .calibration.store import save_profile
 from .config import load_config
 from .labeling import LabelState, key_label_map
@@ -50,6 +50,8 @@ class App:
         self._save_path = calib.get("save_path", "")
         self._gui = self._feedback.get("window", True)
         self._window_width = self._feedback.get("window_width", 0)
+        # 段ごとの所要時間は debug 表示のときだけ測る（どこが遅いかの切り分け用）。
+        profiling.enable(self._feedback.get("debug", False))
 
     @staticmethod
     def _make_guided(rounds: int, protocol: str):
@@ -75,15 +77,25 @@ class App:
 
     def run(self) -> None:
         try:
-            for frame in self._source.frames():
-                obs = self._pipeline.observe(frame)
+            frames = self._source.frames()
+            while True:
+                with profiling.stage("capture"):
+                    frame = next(frames, None)
+                if frame is None:
+                    break
+                with profiling.stage("observe"):
+                    obs = self._pipeline.observe(frame)
                 if self._calibrating:
-                    self._calibrate(obs)
+                    with profiling.stage("output"):
+                        self._calibrate(obs)
                 elif self._guided is not None:
                     if self._run_guided(obs):
                         break
                 else:
-                    self._sinks.emit(obs, self._pipeline.classify(obs))
+                    with profiling.stage("classify"):
+                        assessment = self._pipeline.classify(obs)
+                    with profiling.stage("output"):
+                        self._sinks.emit(obs, assessment)
                 if self._gui and self._handle_keys():
                     break
         finally:

@@ -12,6 +12,7 @@ import math
 import cv2
 import numpy as np
 
+from .. import profiling
 from ..contracts import Assessment, FaceLandmarks, Level, Observation
 from ..features import landmark_ids as ids
 from ..features.rppg import forehead_roi_box
@@ -236,6 +237,7 @@ def _draw_features(img: np.ndarray, obs: Observation) -> None:
     measured = getattr(obs.history, "measured_fps", None)
     if measured:
         lines.append(f"fps: {measured:.1f}")  # 要求値ではなく実際に流れている値
+    lines += profiling.summary()  # どの段が遅いか（cam=取り込み待ち / draw=描画）
 
     h, w = img.shape[:2]
     step = 16
