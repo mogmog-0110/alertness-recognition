@@ -16,12 +16,18 @@ none とは断定しない）。だから「眠気だけ」「ストレスだけ
 システムが出せる手がかり: 閉眼/PERCLOS(`eye_closure`)、瞬き(`blink`)、あくび(`yawn`)、
 うつむき(`head_down`)。
 
-| 段階 | 定義 | 目安の手がかり |
+供給元は UTA-RLDD（`examples/convert_utarldd.py`）を想定。動画1本に1ラベルの3クラスなので、
+4段階のうち low を空けて写す（3クラス→4段階でどれか1つは余る）。
+
+| 段階 | 定義 | UTA-RLDD での対応 |
 |---|---|---|
-| none | TODO | TODO |
-| low | TODO | TODO |
-| medium | TODO | TODO |
-| high | TODO | TODO |
+| none | はっきり覚醒。目が開き、反応が機敏 | alert (0) |
+| low | （このデータセットには対応クラスが無い） | — |
+| medium | 覚醒が落ちている。運転は続けられるが注意力が下がる | low vigilant (5) |
+| high | 明確な眠気。閉眼・あくび・うつむきが出る | drowsy (10) |
+
+動画1本に1ラベルなので、フレーム単位ではラベルがノイジーになる（drowsy 動画の全フレームが
+drowsy 扱いだが、実際に均一に眠いわけではない）。窓単位で使う前提のデータセットと考える。
 
 ## 注意逸脱 distraction（用途依存）
 
@@ -29,18 +35,19 @@ none とは断定しない）。だから「眠気だけ」「ストレスだけ
 節名は録画/manifest の `context`（study / driving 等）と一致させる。
 システムが出せる手がかり: 視線外れ(`gaze_off`)、よそ向き(`head_turn`)。
 
-### context: study（自習）
-
-| 段階 | 定義 | 目安の手がかり |
-|---|---|---|
-| none | TODO | TODO |
-| low | TODO | TODO |
-| medium | TODO | TODO |
-| high | TODO | TODO |
-
 ### context: driving（運転）
 
-用途を扱うときに study の表をコピーして埋める。
+供給元は SynDD（`examples/convert_syndd.py`）を想定。gaze zone の区間アノテを写す。
+「前方から目を離す時間が長いほど、かつ運転と無関係な対象ほど重い」向きで段階を付ける。
+運転に必要な確認（ミラー・メーター）は前方でなくても軽い扱いにする。この考え方は
+attention_buffer cue の根拠（前方から2秒視線を外すと車線内の位置把握が崩れる）と揃える。
+
+| 段階 | 定義 | gaze zone の例 |
+|---|---|---|
+| none | 前方を見ている | forward / windshield / road |
+| low | 運転に必要で前方から外れる確認 | speedometer / mirrors |
+| medium | 運転と無関係だが車内前方 | radio / center console / passenger |
+| high | 前方から大きく外れる | phone / lap / down / backseat |
 
 ## 集中 concentration（用途依存）
 
@@ -60,17 +67,26 @@ none とは断定しない）。だから「眠気だけ」「ストレスだけ
 
 ## ストレス stress（用途非依存）
 
-映像だけでは客観的に判断しにくいため、**人手アノテではなく生体信号から算出したラベルを写す**
-のが基本（例: PPG/ECG の HRV からストレス指標を出し段階化）。用途で意味は変わらないので定義は
-1つ。cue を持たないため rule 経路では常に none、ML 経路（生体信号ラベルで学習したモデル）でのみ
-値が出る。
+映像だけでは客観的に判断しにくいため、**人手アノテではなく実験条件や生体信号から写す**のが
+基本。用途で意味は変わらないので定義は1つ。ルール経路は cue（心拍上昇 hr_elevation と表情の
+緊張 facial_tension の一致）で判定し、ML 経路はこの規約で付けたラベルで学習したモデルが判定する。
 
-| 段階 | 定義（生体指標のしきい値で書く） | 備考 |
+供給元はいまのところ UBFC-Phys（`examples/convert_ubfc_phys.py`）。TSST に準拠した実験の誘発
+条件そのものを段階に写す。同じ実験が難易度2水準（test/ctrl）を持つので、難易度も段階に反映する。
+
+| 段階 | 定義 | UBFC-Phys での対応 |
 |---|---|---|
-| none | TODO | TODO |
-| low | TODO | TODO |
-| medium | TODO | TODO |
-| high | TODO | TODO |
+| none | 安静。負荷がかかっていない | どの難易度でも T1（rest） |
+| low | 弱い負荷 | ctrl の T3（易しい暗算） |
+| medium | 中程度の負荷 | test の T3（暗算） / ctrl の T2（易しいスピーチ） |
+| high | 強い負荷 | test の T2（評価者の前でのスピーチ。TSST の中核ストレッサ） |
+
+被験者は「誘発が効いた」者に限る。自己申告(CSAI-2)の認知不安・身体不安の上昇と自信の低下を
+合算した値が正の被験者だけを使う（`induction_score`）。条件を満たさない被験者は取り込まない。
+
+生体信号(BVP)の HRV から段階を出す経路は取らない。UBFC-Phys の E4 は手首装着で、発話・体動の
+ある区間では拍検出が崩れて RMSSD が生理的にありえない値になる（`--bvp-report` で確認できる）。
+カメラの rPPG から出す `hr_bpm` / `hrv_rmssd` は特徴量として学習に渡るが、ラベルの根拠には使わない。
 
 ## メモ
 
