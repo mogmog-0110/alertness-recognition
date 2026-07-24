@@ -109,7 +109,9 @@ def scorecard(
     y_pred: Sequence[str],
     labels: Sequence[str],
     negative_label: str = "awake",
+    stages: Sequence[str] = _ORDINAL_STAGES,
 ) -> dict:
+    # 段階を束ねたときは、その束ね方の並び(stages)で順序尺度を測る。既定は4段階。
     per_class = {label: precision_recall_f1(y_true, y_pred, label) for label in labels}
     return {
         "n": len(y_true),
@@ -119,8 +121,8 @@ def scorecard(
         "false_alarm_rate": false_alarm_rate(y_true, y_pred, negative_label),
         "miss_rate": miss_rate(y_true, y_pred, negative_label),
         # 段階ラベルなら順序尺度の指標も出す。隣接の取り違えを1段と数えて実力を見る。
-        "ordinal_mae": ordinal_mae(y_true, y_pred),
-        "adjacent_accuracy": adjacent_accuracy(y_true, y_pred),
+        "ordinal_mae": ordinal_mae(y_true, y_pred, stages),
+        "adjacent_accuracy": adjacent_accuracy(y_true, y_pred, stages),
         "per_class": {
             label: {"precision": p, "recall": r, "f1": f} for label, (p, r, f) in per_class.items()
         },
