@@ -5,7 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from alertness.bio import relative_arousal, stage_from_arousal, subject_scale, tonic_windows
+from alertness.bio import (
+    relative_arousal,
+    stage_from_arousal,
+    stress_rise,
+    subject_scale,
+    tonic_windows,
+)
 
 
 def test_tonic_windows_splits_and_takes_median():
@@ -58,6 +64,26 @@ def test_stage_from_arousal_rejects_descending_thresholds():
 def test_stage_from_arousal_checks_threshold_count():
     with pytest.raises(ValueError):
         stage_from_arousal(0.5, (0.5,))  # levels は4段なので3つ要る
+
+
+def test_stress_rise_positive_for_responder():
+    # 安静0.2、ストレス時1.2 → 上がっている（正）。
+    rest = [(0.0, 0.2), (1.0, 0.2)]
+    stress = [(2.0, 1.2), (3.0, 1.2)]
+    every = rest + stress
+    assert stress_rise(rest, stress, every) > 0.3
+
+
+def test_stress_rise_negative_for_non_responder():
+    # ストレス時に下がる被験者は負（除外対象）。
+    rest = [(0.0, 1.0), (1.0, 1.0)]
+    stress = [(2.0, 0.3), (3.0, 0.3)]
+    every = rest + stress
+    assert stress_rise(rest, stress, every) < 0
+
+
+def test_stress_rise_none_without_windows():
+    assert stress_rise([], [(0.0, 1.0)], [(0.0, 1.0)]) is None
 
 
 def test_non_responder_does_not_divide_by_zero():

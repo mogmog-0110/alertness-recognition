@@ -64,6 +64,26 @@ def relative_arousal(scl: float, baseline: float, spread: float) -> float:
     return (scl - baseline) / spread if spread > 0 else 0.0
 
 
+def stress_rise(
+    rest_windows: Sequence[tuple[float, float]],
+    stress_windows: Sequence[tuple[float, float]],
+    all_windows: Sequence[tuple[float, float]],
+    min_spread: float = 1e-3,
+) -> float | None:
+    """ストレス時のEDAが安静よりどれだけ上がったか（その人の振れ幅で正規化）。窓が無ければ None。
+
+    覚醒度と違いピークでなく中央値どうしを比べるので飽和しない。EDAが上がらない被験者を
+    ふるい落とす（ラベルの根拠が無いため）ゲートに使う。負なら安静よりむしろ下がっている。
+    """
+    rest = [scl for _, scl in rest_windows]
+    stress = [scl for _, scl in stress_windows]
+    every = [scl for _, scl in all_windows]
+    if not rest or not stress or not every:
+        return None
+    spread = max(float(np.percentile(every, 90) - np.percentile(every, 10)), min_spread)
+    return float((np.median(stress) - np.median(rest)) / spread)
+
+
 def stage_from_arousal(
     arousal: float, thresholds: Sequence[float], levels: Sequence[str] = LEVELS
 ) -> str:

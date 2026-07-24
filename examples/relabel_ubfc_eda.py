@@ -24,13 +24,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from alertness.bio import relative_arousal, stage_from_arousal, subject_scale, tonic_windows
+from alertness.bio import (
+    relative_arousal,
+    stage_from_arousal,
+    stress_rise,
+    subject_scale,
+    tonic_windows,
+)
 
 EDA_FS = 4.0  # Empatica E4 の EDA サンプリング周波数[Hz]
 WINDOW_S = 20.0  # ラベルを付ける窓[秒]。1タスク180秒が9窓になる。
 TASKS = ("T1", "T2", "T3")
 # 覚醒度(0..1)→段階の昇順しきい値。2値(落ち着き/上昇)に束ねて使う前提。境界は low/medium 間。
 AROUSAL_THRESHOLDS = (0.15, 0.40, 0.70)
+# EDAゲート: ストレス時の上昇がこの値未満の被験者は非反応者として外す。実測では反応者が
+# 全員 0.5 以上、非反応者が 0.04 以下ときれいに分かれたので、間の 0.2 を境にする。
+MIN_STRESS_RISE = 0.2
 LABEL_COLUMN = "label_stress_eda"
 
 
@@ -45,6 +54,15 @@ def _subject_scale(data_root: Path, subject: str):
     rest = _eda_windows(data_root, subject, "T1")
     every = [w for task in TASKS for w in _eda_windows(data_root, subject, task)]
     return subject_scale(rest, every)
+
+
+def _responder(data_root: Path, subject: str) -> tuple[bool, float | None]:
+    """EDAがストレス時に上がった被験者か。(反応したか, 上昇量) を返す。"""
+    rest = _eda_windows(data_root, subject, "T1")
+    stress = [w for task in ("T2", "T3") for w in _eda_windows(data_root, subject, task)]
+    every = [w for task in TASKS for w in _eda_windows(data_root, subject, task)]
+    rise = stress_rise(rest, stress, every)
+    return (rise is not None and rise >= MIN_STRESS_RISE), rise
 
 
 def label_clip(df: pd.DataFrame, windows: list[tuple[float, float]], scale) -> list[str] | None:
@@ -66,15 +84,30 @@ def _task_of(clip_dir: Path) -> str:
     return clip_dir.name.rsplit("_", 1)[-1]
 
 
-def relabel(ingested: Path, data_root: Path, out_base: Path) -> tuple[int, int]:
-    """取り込み済みCSVにEDAラベル列を足す。(付けたクリップ数, 飛ばした数) を返す。"""
+def relabel(
+    ingested: Path, data_root: Path, out_base: Path, *, gate: bool = True
+) -> tuple[int, int]:
+    """取り込み済みCSVにEDAラベル列を足す。(付けたクリップ数, 飛ばした数) を返す。
+
+    gate=True なら、EDAがストレス時に上がらなかった非反応者を外す（ラベルの根拠が無いため）。
+    """
     scales: dict[str, object] = {}
+    responders: dict[str, bool] = {}
     labeled = skipped = 0
     for clip_dir in sorted(ingested.glob("s*__*")):
         subject = clip_dir.name.split("__")[0]
         task = _task_of(clip_dir)
         csvs = list(clip_dir.glob("*.csv"))
         if not csvs:
+            continue
+        if subject not in responders:
+            ok, rise = _responder(data_root, subject)
+            responders[subject] = ok
+            if gate and not ok:
+                rise_str = "EDA無し" if rise is None else f"上昇 {rise:+.2f}"
+                print(f"{subject}: EDA非反応（{rise_str}）。除外", file=sys.stderr)
+        if gate and not responders[subject]:
+            skipped += 1
             continue
         if subject not in scales:
             scales[subject] = _subject_scale(data_root, subject)
@@ -99,13 +132,14 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--ingested", default="runs/ingested", help="取り込み済みCSVの場所")
     parser.add_argument("--data", default="data/UBFC-Phys", help="eda_*.csv のある被験者フォルダ")
     parser.add_argument("--out", default="runs/ingested", help="出力先（既定は上書き）")
+    parser.add_argument("--no-gate", action="store_true", help="EDA非反応者も除外せず付ける")
     args = parser.parse_args(argv)
 
     ingested = Path(args.ingested)
     if not ingested.is_dir():
         print(f"取り込み済みフォルダがありません: {ingested}", file=sys.stderr)
         return 1
-    labeled, skipped = relabel(ingested, Path(args.data), Path(args.out))
+    labeled, skipped = relabel(ingested, Path(args.data), Path(args.out), gate=not args.no_gate)
     print(f"EDAラベルを付けたクリップ: {labeled} / 飛ばし: {skipped}")
     print(f"学習では target='{LABEL_COLUMN}', label_collapse='binary' を指定して使う。")
     return 0
