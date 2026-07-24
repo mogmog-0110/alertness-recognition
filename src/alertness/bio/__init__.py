@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from .eda import relative_arousal, stage_from_arousal, subject_scale, tonic_windows
 from .hrv import mean_hr, pnn50, rmssd, rr_intervals_ms, sdnn
 from .peaks import detect_peaks
 from .stress import stage_from_rmssd
@@ -19,4 +20,8 @@ __all__ = [
     "rmssd",
     "pnn50",
     "stage_from_rmssd",
+    "tonic_windows",
+    "subject_scale",
+    "relative_arousal",
+    "stage_from_arousal",
 ]
