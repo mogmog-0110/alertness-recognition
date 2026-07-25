@@ -38,6 +38,7 @@ import zipfile
 from pathlib import Path
 
 import convert_ubfc_phys as conv
+import relabel_ubfc_eda as eda
 
 from alertness.config import load_config
 from alertness.ingest.manifest import load_manifest
@@ -130,8 +131,14 @@ def process_subject(
     if not keep_videos:
         for video in _videos_of(subject_dir):
             video.unlink()
+
+    # 3タスク揃ったので、EDA(eda_*.csv)から窓単位ラベルを足す（動画は不要）。非反応者は
+    # ラベルの根拠が無いので EDA ラベルだけ付けない（プロトコルラベルは残る）。
+    eda_count, eda_note = eda.relabel_subject(subject, out_base, root)
+    eda_msg = f"EDAラベル {eda_count}本" if eda_count else f"EDAラベル無し（{eda_note}）"
+
     tail = "" if keep_videos else "（動画は削除）"
-    return "ingested", f"{subject}: 取り込み {len(manifests)} タスク{tail}"
+    return "ingested", f"{subject}: 取り込み {len(manifests)} タスク / {eda_msg}{tail}"
 
 
 def _summary(out_base: Path) -> str:

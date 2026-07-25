@@ -84,6 +84,36 @@ def _task_of(clip_dir: Path) -> str:
     return clip_dir.name.rsplit("_", 1)[-1]
 
 
+def relabel_subject(
+    subject: str, ingested: Path, data_root: Path, *, gate: bool = True
+) -> tuple[int, str | None]:
+    """1被験者の取り込み済みクリップにEDAラベル列を上書きで足す。
+
+    その被験者の3タスクが揃ってから呼ぶ（安静基準と振れ幅に全タスクが要る）。
+    (付けたクリップ数, 除外理由 or None) を返す。取り込みパイプラインから呼ぶ用。
+    """
+    if gate:
+        ok, rise = _responder(data_root, subject)
+        if not ok:
+            return 0, "EDA無し" if rise is None else f"EDA非反応（上昇 {rise:+.2f}）"
+    scale = _subject_scale(data_root, subject)
+    labeled = 0
+    for clip_dir in sorted(ingested.glob(f"{subject}__*")):
+        csvs = list(clip_dir.glob("*.csv"))
+        if not csvs:
+            continue
+        stages = label_clip(
+            pd.read_csv(csvs[0]), _eda_windows(data_root, subject, _task_of(clip_dir)), scale
+        )
+        if stages is None:
+            continue
+        df = pd.read_csv(csvs[0])
+        df[LABEL_COLUMN] = stages
+        df.to_csv(csvs[0], index=False)  # 同じCSVに列を足して上書き
+        labeled += 1
+    return labeled, None
+
+
 def relabel(
     ingested: Path, data_root: Path, out_base: Path, *, gate: bool = True
 ) -> tuple[int, int]:
