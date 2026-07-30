@@ -3,22 +3,8 @@
 ルールベースの CueClassifier の隣に置く、差し替え可能なもう一つの判定器。
 cue は使わず、features を「学習時に保存した列順」でベクトル化し、軸ごとの
 モデルで段階を予測する。学習(alertness-colab)が書き出した bundle
-{models, features, classes, window} をそのまま受け取る。学習と推論で同じ列順・同じ
-軸名になるのが唯一の取り決め。
-
-## 時系列モデル（LSTM 等）への対応
-
-bundle の window が入力の形を決める。SVM や Random Forest のようにフレーム単位で
-判定するモデルは window=1（省略時の既定）で、1フレーム分の特徴量ベクトルを渡す。
-LSTM のように時系列窓を要るモデルは window>1 で、直近 window フレームを古い順に
-並べた行列を渡す。過去フレームは Observation.history から取る（contracts.History が
-「将来 LSTM などが時系列窓を読む口にもなる」として用意されている口）。
-
-窓の長さを推論側で決め打ちせず学習成果物に持たせるのは、列順(features)と同じ理由。
-学習と推論で食い違うと静かに壊れるので、取り決めは model.pkl 側に一本化する。
-
-時系列モデルは pickle されたクラスではなく素のデータとして入っている（学習側のコードを
-import せずに読めるようにするため）。復元は sequence_model が担う。
+{models, features, classes} をそのまま受け取る。モデルはフレーム単位で判定する
+scikit-learn 由来（SVM 等）。学習と推論で同じ列順・同じ軸名になるのが唯一の取り決め。
 """
 
 from __future__ import annotations
@@ -28,7 +14,6 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ..contracts import Assessment, Dimension, Features, Level, Observation
-from .sequence_model import load_models, window_of
 from .states import DimensionSpec, alarm_of, level_for
 
 # 学習のターゲット列 "label_<軸>" と、本体の評価軸名 "<軸>" をつなぐ接頭辞。
@@ -45,10 +30,6 @@ _LEVEL_BY_NAME = {
     "medium": Level.MEDIUM,
     "high": Level.HIGH,
 }
-
-# 履歴を要求する時間に掛ける余裕。実フレームレートが公称より低いと window 枚に足りない
-# ので、多めに取り出してから末尾を切る。取りすぎても末尾を切るだけで害はない。
-_HISTORY_MARGIN = 2.0
 
 
 def _dimension_name(target: str) -> str:
@@ -78,50 +59,23 @@ class MLClassifier:
             raise ValueError("model.pkl に軸ごとのモデル(models)が入っていません。")
         if not features:
             raise ValueError("model.pkl に特徴量の列順(features)が入っていません。")
-        # 時系列モデルはクラスではなく素のデータとして入っているので、ここで復元する
-        # （学習側のコードを import せずに読めるようにするため。sequence_model 参照）。
-        self._models = load_models(models)
+        self._models = dict(models)
         self._features = list(features)
-        # 入力の形。1 ならフレーム単位、2以上なら直近 window フレームの行列を渡す。
-        self._window = max(1, int(bundle.get("window") or window_of(self._models)))
         # 学習が安静基準で中心化されているか。されているなら推論も同じ中心化を通す。
         # 学習側(rest_basis)と推論側(profile.baselines)で対称に「安静からの差」にする。
         self._rest_centered = bool(bundle.get("rest_centered"))
         # 軸の向き（高いほど良い軸か）は config 側の取り決めなので、rule と同じ spec を使う。
         self._specs = {s.name: s for s in (dimensions or ())}
 
-    @property
-    def window(self) -> int:
-        return self._window
-
     def assess(self, obs: Observation) -> Assessment:
-        sample = self._sample(obs)
+        baselines = obs.profile.baselines if self._rest_centered else {}
+        sample = self._vector(obs.features, baselines)
         dims: dict[str, Dimension] = {}
         for target, model in self._models.items():
             name = _dimension_name(target)
             level, score = self._predict(model, sample)
             dims[name] = self._as_dimension(name, score, level)
         return Assessment(dimensions=dims, timestamp=obs.features.timestamp)
-
-    def _sample(self, obs: Observation) -> list:
-        """モデルへ渡す1件分の入力。window=1 なら特徴量ベクトル、2以上ならその行列。"""
-        baselines = obs.profile.baselines if self._rest_centered else {}
-        if self._window == 1:
-            return self._vector(obs.features, baselines)
-        return self._sequence(obs, baselines)
-
-    def _sequence(self, obs: Observation, baselines: Mapping[str, float]) -> list[list[float]]:
-        """直近 window フレームの特徴量を古い順に並べる。
-
-        履歴が足りない起動直後は、最も古い行を複製して前に詰める。判定を止めてしまうと、
-        窓が満ちるまでの数秒間だけ挙動が変わり、ルール経路との比較がしづらくなるため。
-        """
-        fps = obs.history.fps if obs.history.fps > 0 else 30.0
-        span = self._window / fps * _HISTORY_MARGIN
-        rows = [self._vector(f, baselines) for f in obs.history.recent(span)][-self._window :]
-        if not rows:
-            rows = [self._vector(obs.features, baselines)]
-        return [rows[0]] * (self._window - len(rows)) + rows
 
     def _vector(self, features: Features, baselines: Mapping[str, float]) -> list[float]:
         # 欠損は 0.0（学習側の fillna(0.0) と揃える）。列順は bundle に従う。
