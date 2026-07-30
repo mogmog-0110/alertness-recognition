@@ -99,6 +99,10 @@ class CalibrationProfile:
     head_pose_neutral: Pose  # 正面・中立時の頭部姿勢
     gaze_center: tuple[float, float]  # 画面中心を見たときの虹彩位置（正規化）
     face_scale: float  # 目間距離。距離正規化の基準
+    # 安静時の各特徴量の代表値。ストレスや眠気の絶対値には大きな個人差があるので、
+    # ここからの差にして「その人の平常からどれだけ離れたか」で判定する。学習側の
+    # rest_center と対になる規約。空なら中心化しない（素通し）。
+    baselines: Mapping[str, float] = field(default_factory=dict)
     user_id: str = "default"
     schema_version: int = 1
 
