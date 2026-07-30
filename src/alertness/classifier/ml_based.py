@@ -24,17 +24,32 @@ _AXIS_PREFIX = "label_"
 # 実在しない値になるので、値の有無そのものを別の特徴として渡している。
 _PRESENT_SUFFIX = "_present"
 
+# 予測ラベル → Level。4段階に加えて、学習側で束ねた段階（labels.py の束ね方）にも対応する。
+# 語彙は衝突しない（none/high は4段階と3段階で同じ Level、mid は3段階のみ、
+# calm/elevated は2値のみ）ので、1つの表で全スキームを扱える。2値の elevated は
+# 「上がっている」を1段階で表すので、警告が明確に立つ HIGH に写す。
 _LEVEL_BY_NAME = {
     "none": Level.NONE,
     "low": Level.LOW,
     "medium": Level.MEDIUM,
     "high": Level.HIGH,
+    "calm": Level.NONE,  # 2値: 落ち着き
+    "elevated": Level.HIGH,  # 2値: 上昇
+    "mid": Level.MEDIUM,  # 3段階: 中
 }
+
+# ラベル列の軸名に付く、ラベルの作り方を表す接尾辞。同じ評価軸を別の作り方でラベル付け
+# した列（例: EDA から作った label_stress_eda）も、アプリの評価軸（stress）として扱う。
+_SOURCE_SUFFIXES = ("_eda",)
 
 
 def _dimension_name(target: str) -> str:
-    # "label_drowsiness" → "drowsiness"
-    return target[len(_AXIS_PREFIX) :] if target.startswith(_AXIS_PREFIX) else target
+    # "label_stress_eda" → "stress"。接頭辞 label_ とラベル源の接尾辞を外す。
+    name = target[len(_AXIS_PREFIX) :] if target.startswith(_AXIS_PREFIX) else target
+    for suffix in _SOURCE_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
 
 
 def _level_of(name: str) -> Level:

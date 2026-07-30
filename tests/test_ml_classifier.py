@@ -69,6 +69,30 @@ def test_feature_vector_follows_bundle_order():
     assert model.seen_x == [[0.9, 0.3]]
 
 
+def test_binary_labels_map_to_levels():
+    # 2値で束ねて学習したモデル（calm/elevated）も Level に写せる。
+    clf = MLClassifier(_bundle({"label_stress": _StubModel("elevated")}, ["ear"]))
+    a = clf.assess(_obs({"ear": 0.1}))
+    assert a.dimensions["stress"].level is Level.HIGH  # elevated → 警告あり
+
+    clf = MLClassifier(_bundle({"label_stress": _StubModel("calm")}, ["ear"]))
+    a = clf.assess(_obs({"ear": 0.1}))
+    assert a.dimensions["stress"].level is Level.NONE  # calm → 警告なし
+
+
+def test_coarse3_mid_maps_to_medium():
+    clf = MLClassifier(_bundle({"label_stress": _StubModel("mid")}, ["ear"]))
+    assert clf.assess(_obs({"ear": 0.1})).dimensions["stress"].level is Level.MEDIUM
+
+
+def test_eda_label_source_maps_to_base_axis():
+    # EDA で作ったラベル列 label_stress_eda も、アプリの評価軸 stress として出す。
+    clf = MLClassifier(_bundle({"label_stress_eda": _StubModel("elevated")}, ["ear"]))
+    a = clf.assess(_obs({"ear": 0.1}))
+    assert set(a.dimensions) == {"stress"}
+    assert a.dimensions["stress"].level is Level.HIGH
+
+
 def test_missing_feature_defaults_to_zero():
     model = _StubModel("none")
     clf = MLClassifier(_bundle({"label_drowsiness": model}, ["ear", "jawOpen"]))
