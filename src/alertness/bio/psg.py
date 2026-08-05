@@ -1,8 +1,33 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
+
+
+def read_psg_signal(path: str | Path, *, channel: str | None = None) -> tuple[np.ndarray, int]:
+    """EDF もしくは簡易テキストから信号を読み込む。"""
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"PSG file not found: {p}")
+
+    if p.suffix.lower() == ".edf":
+        try:
+            import pyedflib
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise ImportError("pyedflib が必要です。pip install pyedflib で導入してください。") from exc
+        with pyedflib.EdfReader(str(p)) as reader:
+            if channel is None:
+                channel = reader.getSignalLabels()[0]
+            channel_index = reader.getSignalLabels().index(channel)
+            signal = reader.readSignal(channel_index)
+            sample_rate = int(reader.getSampleFrequencies()[channel_index])
+            return np.asarray(signal, dtype=float), sample_rate
+
+    with p.open("r", encoding="utf-8") as handle:
+        values = [float(line.strip()) for line in handle if line.strip()]
+    return np.asarray(values, dtype=float), 1
 
 
 def build_psg_feature_series(

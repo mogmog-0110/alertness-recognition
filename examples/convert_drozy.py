@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from alertness.bio.psg import build_psg_feature_series
+from alertness.bio.psg import build_psg_feature_series, read_psg_signal
 from alertness.calibration.baseline import normalize_feature_series
 from alertness.classifier.cds import compute_cds
 from alertness.classifier.lod import classify_lod
@@ -52,11 +52,8 @@ def discover_sessions(root: Path) -> list[dict[str, Any]]:
 def _read_signal(path: Path | None) -> list[float]:
     if path is None or not path.exists():
         return []
-    with path.open("r", encoding="utf-8") as handle:
-        lines = [line.strip() for line in handle if line.strip()]
-    if not lines:
-        return []
-    return [float(line) for line in lines if line.replace("-", "", 1).replace(".", "", 1).isdigit()]
+    signal, _ = read_psg_signal(path)
+    return signal.tolist()
 
 
 def build_manifest_for_session(session: dict[str, Any]) -> dict[str, Any]:
