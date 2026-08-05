@@ -19,15 +19,19 @@ def build_psg_feature_series(
     if eeg_arr.size == 0 or eog_arr.size == 0:
         return []
 
-    window_size = max(1, int(sample_rate * window_seconds))
+    window_size = max(1, min(len(eeg_arr), len(eog_arr), int(sample_rate * window_seconds)))
     features: list[dict[str, float]] = []
-    for start in range(0, min(len(eeg_arr), len(eog_arr)) - window_size + 1, window_size):
+    total_length = min(len(eeg_arr), len(eog_arr))
+    for start in range(0, total_length, window_size):
         eeg_window = eeg_arr[start : start + window_size]
         eog_window = eog_arr[start : start + window_size]
+        if eeg_window.size == 0 or eog_window.size == 0:
+            continue
 
-        theta = float(np.mean(np.abs(np.fft.rfft(eeg_window))[[2, 3]]))
-        alpha = float(np.mean(np.abs(np.fft.rfft(eeg_window))[[4, 5]]))
-        beta = float(np.mean(np.abs(np.fft.rfft(eeg_window))[[6, 7]]))
+        spectrum = np.abs(np.fft.rfft(eeg_window))
+        theta = float(np.mean(spectrum[np.min([2, len(spectrum) - 1]) : np.min([3, len(spectrum)])]))
+        alpha = float(np.mean(spectrum[np.min([4, len(spectrum) - 1]) : np.min([5, len(spectrum)])]))
+        beta = float(np.mean(spectrum[np.min([6, len(spectrum) - 1]) : np.min([7, len(spectrum)])]))
         sem = float(np.std(eog_window))
         blink_duration = float(np.mean(np.abs(eog_window)))
         microsleep_duration = float(np.sum(np.abs(eog_window) < 0.05)) / max(1, len(eog_window))
