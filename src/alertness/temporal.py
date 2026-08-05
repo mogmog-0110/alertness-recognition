@@ -52,6 +52,44 @@ def compress_segments(labels: Sequence[str], *, min_duration: int = 2) -> list[d
     return segments
 
 
+def map_labels_to_video_segments(
+    labels: Sequence[str],
+    *,
+    fps: float = 30.0,
+    min_duration_seconds: float = 1.0,
+) -> list[dict[str, object]]:
+    """1秒ごとの LoD ラベルを動画 FPS に合わせた区間へ写す。"""
+    if not labels:
+        return []
+    if fps <= 0:
+        raise ValueError("fps は正の値である必要があります")
+
+    frame_count = max(1, int(len(labels) * fps))
+    expanded: list[str] = []
+    for index, label in enumerate(labels):
+        frame_span = max(1, int(round(fps)))
+        expanded.extend([label] * frame_span)
+
+    segments: list[dict[str, object]] = []
+    current_label = expanded[0]
+    start_frame = 0
+    for index in range(1, len(expanded)):
+        if expanded[index] != current_label:
+            if index - start_frame >= max(1, int(round(fps * min_duration_seconds))):
+                segments.append(
+                    {
+                        "start": start_frame / fps,
+                        "end": index / fps,
+                        "label": current_label,
+                    }
+                )
+            current_label = expanded[index]
+            start_frame = index
+    if len(expanded) - start_frame >= max(1, int(round(fps * min_duration_seconds))):
+        segments.append({"start": start_frame / fps, "end": len(expanded) / fps, "label": current_label})
+    return segments
+
+
 class TemporalContext:
     def __init__(self, max_seconds: float = 60.0, fps: float = 30.0) -> None:
         self._fps = fps

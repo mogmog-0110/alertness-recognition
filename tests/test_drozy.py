@@ -4,7 +4,7 @@ from alertness.bio.psg import build_psg_feature_series
 from alertness.calibration.baseline import normalize_feature_series
 from alertness.classifier.cds import compute_cds
 from alertness.classifier.lod import classify_lod
-from alertness.temporal import compress_segments, smooth_labels
+from alertness.temporal import compress_segments, map_labels_to_video_segments, smooth_labels
 
 
 def test_build_psg_feature_series_returns_sleep_related_features() -> None:
@@ -62,3 +62,15 @@ def test_smooth_and_compress_labels_produce_segments() -> None:
     assert segments[0]["label"] == "none"
     assert segments[1]["label"] == "low"
     assert segments[2]["label"] == "high"
+
+
+def test_map_labels_to_video_segments_respects_video_fps() -> None:
+    labels = ["none", "low", "low", "high"]
+
+    thirty_fps = map_labels_to_video_segments(labels, fps=30.0, min_duration_seconds=1.0)
+    fifteen_fps = map_labels_to_video_segments(labels, fps=15.0, min_duration_seconds=1.0)
+
+    assert thirty_fps[0]["end"] == 1.0
+    assert fifteen_fps[0]["end"] == 1.0
+    assert thirty_fps[-1]["end"] == 4.0
+    assert fifteen_fps[-1]["end"] == 4.0
