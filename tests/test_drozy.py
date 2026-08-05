@@ -8,6 +8,28 @@ from alertness.classifier.lod import classify_lod
 from alertness.temporal import compress_segments, map_labels_to_video_segments, smooth_labels
 
 
+def test_discover_sessions_from_drozy_dataset_tree(tmp_path) -> None:
+    root = tmp_path / "DROZY"
+    (root / "psg").mkdir(parents=True)
+    (root / "pvt-rt").mkdir(parents=True)
+    (root / "timestamps").mkdir(parents=True)
+    (root / "videos_i8").mkdir(parents=True)
+
+    (root / "psg" / "1-1.edf").write_text("dummy", encoding="utf-8")
+    (root / "pvt-rt" / "1-1.csv").write_text("rt\n1000\n1200\n", encoding="utf-8")
+    (root / "timestamps" / "1-1.txt").write_text("0\n1\n2\n", encoding="utf-8")
+    (root / "videos_i8" / "1-1.mp4").touch()
+
+    sessions = convert_drozy.discover_sessions(root)
+
+    assert len(sessions) == 1
+    assert sessions[0]["subject"] == "1"
+    assert sessions[0]["session"] == "1-1"
+    assert sessions[0]["psg"].name == "1-1.edf"
+    assert sessions[0]["pvt"].name == "1-1.csv"
+    assert sessions[0]["timestamps"].name == "1-1.txt"
+
+
 def test_build_psg_feature_series_returns_sleep_related_features() -> None:
     sample_rate = 512
     t = np.arange(0, sample_rate, dtype=float)

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import sys
 from pathlib import Path
@@ -20,32 +21,83 @@ from alertness.temporal import build_manifest_segments, smooth_labels
 
 
 def discover_sessions(root: Path) -> list[dict[str, Any]]:
-    """DROZY の典型構造を仮定して session を発見する。"""
+    """DROZY の実データ構造に合わせて session を発見する。"""
     sessions: list[dict[str, Any]] = []
     if not root.exists():
         return sessions
 
-    for subject_dir in sorted(root.iterdir()):
-        if not subject_dir.is_dir():
+    psg_dir = root / "psg"
+    pvt_dir = root / "pvt-rt"
+    timestamps_dir = root / "timestamps"
+    videos_dir = root / "videos_i8"
+
+    psg_files: dict[str, Path] = {}
+    pvt_files: dict[str, Path] = {}
+    timestamp_files: dict[str, Path] = {}
+    video_files: dict[str, Path] = {}
+
+    if any([psg_dir.exists(), pvt_dir.exists(), timestamps_dir.exists(), videos_dir.exists()]):
+        psg_files = {p.stem: p for p in psg_dir.glob("*.edf") if p.is_file()} if psg_dir.exists() else {}
+        pvt_files = {p.stem: p for p in pvt_dir.glob("*.csv") if p.is_file()} if pvt_dir.exists() else {}
+        timestamp_files = {p.stem: p for p in timestamps_dir.glob("*.txt") if p.is_file()} if timestamps_dir.exists() else {}
+        video_files = {p.stem: p for p in videos_dir.glob("*.mp4") if p.is_file()} if videos_dir.exists() else {}
+
+    if not (psg_files or pvt_files or timestamp_files or video_files):
+        for subject_dir in sorted(root.iterdir()):
+            if not subject_dir.is_dir():
+                continue
+            for session_dir in sorted(subject_dir.iterdir()):
+                if not session_dir.is_dir():
+                    continue
+                files = {p.name: p for p in session_dir.iterdir() if p.is_file()}
+                if not files:
+                    continue
+                video_path = next((p for p in files.values() if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv"}), None)
+                eeg_path = next((p for p in files.values() if "eeg" in p.name.lower()), None)
+                eog_path = next((p for p in files.values() if "eog" in p.name.lower()), None)
+                pvt_path = next((p for p in files.values() if "pvt" in p.name.lower()), None)
+                sessions.append(
+                    {
+                        "subject": subject_dir.name,
+                        "session": session_dir.name,
+                        "root": session_dir,
+                        "video": video_path,
+                        "video_fps": None,
+                        "eeg": eeg_path,
+                        "eog": eog_path,
+                        "psg": eeg_path or eog_path,
+                        "pvt": pvt_path,
+                        "timestamps": None,
+                        "kss": None,
+                    }
+                )
+        return sessions
+
+    session_ids = sorted(set(psg_files) | set(pvt_files) | set(timestamp_files) | set(video_files))
+    for session_id in session_ids:
+        psg_path = psg_files.get(session_id)
+        pvt_path = pvt_files.get(session_id)
+        timestamp_path = timestamp_files.get(session_id)
+        video_path = video_files.get(session_id)
+        if not (psg_path or pvt_path or timestamp_path or video_path):
             continue
-        for session_dir in sorted(subject_dir.iterdir()):
-            if not session_dir.is_dir():
-                continue
-            files = {p.name: p for p in session_dir.iterdir() if p.is_file()}
-            if not files:
-                continue
-            sessions.append(
-                {
-                    "subject": subject_dir.name,
-                    "session": session_dir.name,
-                    "root": session_dir,
-                    "video": next((p for p in files.values() if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv"}), None),
-                    "eeg": next((p for p in files.values() if "eeg" in p.name.lower()), None),
-                    "eog": next((p for p in files.values() if "eog" in p.name.lower()), None),
-                    "pvt": next((p for p in files.values() if "pvt" in p.name.lower()), None),
-                    "kss": next((p for p in files.values() if "kss" in p.name.lower()), None),
-                }
-            )
+
+        subject_name = session_id.split("-", 1)[0] if "-" in session_id else session_id
+        sessions.append(
+            {
+                "subject": subject_name or session_id,
+                "session": session_id,
+                "root": root,
+                "video": video_path,
+                "video_fps": None,
+                "eeg": psg_path,
+                "eog": psg_path,
+                "psg": psg_path,
+                "pvt": pvt_path,
+                "timestamps": timestamp_path,
+                "kss": None,
+            }
+        )
     return sessions
 
 
@@ -54,6 +106,38 @@ def _read_signal(path: Path | None) -> list[float]:
         return []
     signal, _ = read_psg_signal(path)
     return signal.tolist()
+
+
+def _read_pvt_series(path: Path | None) -> list[float]:
+    if path is None or not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        rows = list(csv.reader(handle))
+    values: list[float] = []
+    for row in rows:
+        if not row:
+            continue
+        try:
+            values.append(float(row[0]))
+        except ValueError:
+            continue
+    return values
+
+
+def _read_timestamp_series(path: Path | None) -> list[float]:
+    if path is None or not path.exists():
+        return []
+    values: list[float] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.strip().split()
+            if len(parts) < 2:
+                continue
+            try:
+                values.append(float(parts[-1]))
+            except ValueError:
+                continue
+    return values
 
 
 def infer_video_fps(session: dict[str, Any]) -> float:
@@ -90,13 +174,15 @@ def build_manifest_for_session(session: dict[str, Any]) -> dict[str, Any]:
     if not eeg or not eog:
         raise ValueError(f"PSG signal not found for {session['subject']}/{session['session']}")
 
+    pvt_values = _read_pvt_series(session.get("pvt"))
+    timestamps = _read_timestamp_series(session.get("timestamps"))
     features = build_psg_feature_series(eeg, eog, sample_rate=512, window_seconds=1.0)
     normalized = normalize_feature_series(features)
     scores = compute_cds(normalized)
     calibrated_scores = calibrate_with_pvt_kss(
         scores,
-        pvt=session.get("pvt", []),
-        kss=session.get("kss", []),
+        pvt=pvt_values,
+        kss=timestamps,
     )
     labels = classify_lod(calibrated_scores)
     smoothed = smooth_labels(labels, window=3)
