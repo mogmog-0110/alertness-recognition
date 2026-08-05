@@ -90,6 +90,19 @@ def map_labels_to_video_segments(
     return segments
 
 
+def build_manifest_segments(
+    labels: Sequence[str],
+    *,
+    fps: float = 30.0,
+    min_duration_seconds: float = 1.0,
+) -> list[dict[str, object]]:
+    """LoD ラベルを最終 manifest 用の区間へ整形する。"""
+    if not labels:
+        return []
+    mapped = map_labels_to_video_segments(labels, fps=fps, min_duration_seconds=min_duration_seconds)
+    return [{"start": float(item["start"]), "end": float(item["end"]), "label": str(item["label"])} for item in mapped]
+
+
 class TemporalContext:
     def __init__(self, max_seconds: float = 60.0, fps: float = 30.0) -> None:
         self._fps = fps

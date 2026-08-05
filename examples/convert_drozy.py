@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from alertness.bio.psg import build_psg_feature_series, read_psg_signal
-from alertness.calibration.baseline import normalize_feature_series
+from alertness.calibration.baseline import calibrate_with_pvt_kss, normalize_feature_series
 from alertness.classifier.cds import compute_cds
 from alertness.classifier.lod import classify_lod
 from alertness.ingest.mapping import segment, write_manifest
-from alertness.temporal import compress_segments, map_labels_to_video_segments, smooth_labels
+from alertness.temporal import build_manifest_segments, smooth_labels
 
 
 def discover_sessions(root: Path) -> list[dict[str, Any]]:
@@ -56,6 +56,33 @@ def _read_signal(path: Path | None) -> list[float]:
     return signal.tolist()
 
 
+def infer_video_fps(session: dict[str, Any]) -> float:
+    """セッション情報から動画 FPS を推定する。"""
+    explicit = session.get("video_fps")
+    if explicit is not None:
+        try:
+            fps = float(explicit)
+        except (TypeError, ValueError):
+            fps = 0.0
+        if fps > 0:
+            return fps
+
+    video = session.get("video")
+    if isinstance(video, Path):
+        name = video.name.lower()
+        if "15" in name and "fps" in name:
+            return 15.0
+        if "30" in name and "fps" in name:
+            return 30.0
+
+    context = str(session.get("session", "")).lower()
+    if "15" in context:
+        return 15.0
+    if "30" in context:
+        return 30.0
+    return 30.0
+
+
 def build_manifest_for_session(session: dict[str, Any]) -> dict[str, Any]:
     """セッション単位で LO D を生成し、manifest へ変換する。"""
     eeg = _read_signal(session.get("eeg"))
@@ -66,14 +93,17 @@ def build_manifest_for_session(session: dict[str, Any]) -> dict[str, Any]:
     features = build_psg_feature_series(eeg, eog, sample_rate=512, window_seconds=1.0)
     normalized = normalize_feature_series(features)
     scores = compute_cds(normalized)
-    labels = classify_lod(scores)
+    calibrated_scores = calibrate_with_pvt_kss(
+        scores,
+        pvt=session.get("pvt", []),
+        kss=session.get("kss", []),
+    )
+    labels = classify_lod(calibrated_scores)
     smoothed = smooth_labels(labels, window=3)
 
-    video_fps = float(session.get("video_fps", 30.0) or 30.0)
-    if video_fps <= 0:
-        video_fps = 30.0
+    video_fps = infer_video_fps(session)
 
-    mapped_segments = map_labels_to_video_segments(
+    mapped_segments = build_manifest_segments(
         smoothed,
         fps=video_fps,
         min_duration_seconds=1.0,

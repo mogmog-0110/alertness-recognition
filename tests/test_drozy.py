@@ -98,11 +98,11 @@ def test_build_manifest_for_session_uses_video_fps(monkeypatch) -> None:
 
     captured: dict[str, float] = {}
 
-    def fake_map_labels_to_video_segments(labels, *, fps=30.0, min_duration_seconds=1.0):
+    def fake_build_manifest_segments(labels, *, fps=30.0, min_duration_seconds=1.0):
         captured["fps"] = fps
         return [{"start": 0.0, "end": 1.0, "label": labels[0]}]
 
-    monkeypatch.setattr(convert_drozy, "map_labels_to_video_segments", fake_map_labels_to_video_segments)
+    monkeypatch.setattr(convert_drozy, "build_manifest_segments", fake_build_manifest_segments)
 
     manifest = convert_drozy.build_manifest_for_session(session)
 
