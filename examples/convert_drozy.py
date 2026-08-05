@@ -16,7 +16,7 @@ from alertness.calibration.baseline import normalize_feature_series
 from alertness.classifier.cds import compute_cds
 from alertness.classifier.lod import classify_lod
 from alertness.ingest.mapping import segment, write_manifest
-from alertness.temporal import compress_segments, smooth_labels
+from alertness.temporal import compress_segments, map_labels_to_video_segments, smooth_labels
 
 
 def discover_sessions(root: Path) -> list[dict[str, Any]]:
@@ -68,11 +68,19 @@ def build_manifest_for_session(session: dict[str, Any]) -> dict[str, Any]:
     scores = compute_cds(normalized)
     labels = classify_lod(scores)
     smoothed = smooth_labels(labels, window=3)
-    segments = compress_segments(smoothed, min_duration=2)
 
+    video_fps = float(session.get("video_fps", 30.0) or 30.0)
+    if video_fps <= 0:
+        video_fps = 30.0
+
+    mapped_segments = map_labels_to_video_segments(
+        smoothed,
+        fps=video_fps,
+        min_duration_seconds=1.0,
+    )
     manifest_segments = [
         segment(start=float(item["start"]), end=float(item["end"]), drowsiness=str(item["label"]))
-        for item in segments
+        for item in mapped_segments
     ]
     if not manifest_segments:
         manifest_segments = [segment(start=0.0, end=1.0, drowsiness="none")]
