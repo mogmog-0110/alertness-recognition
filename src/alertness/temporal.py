@@ -13,6 +13,45 @@ from collections.abc import Sequence
 from .contracts import Features
 
 
+def smooth_labels(labels: Sequence[str], *, window: int = 3) -> list[str]:
+    """近傍のラベルを多数決で平滑化する。"""
+    if not labels:
+        return []
+    if window <= 1:
+        return list(labels)
+
+    smoothed: list[str] = []
+    for index in range(len(labels)):
+        start = max(0, index - window // 2)
+        end = min(len(labels), start + window)
+        start = max(0, end - window)
+        window_labels = list(labels[start:end])
+        counts: dict[str, int] = {}
+        for value in window_labels:
+            counts[value] = counts.get(value, 0) + 1
+        smoothed.append(max(counts.items(), key=lambda item: (item[1], item[0]))[0])
+    return smoothed
+
+
+def compress_segments(labels: Sequence[str], *, min_duration: int = 2) -> list[dict[str, object]]:
+    """連続する同一ラベルを区間へ圧縮する。"""
+    if not labels:
+        return []
+
+    segments: list[dict[str, object]] = []
+    current_label = labels[0]
+    start = 0
+    for index in range(1, len(labels)):
+        if labels[index] != current_label:
+            if index - start >= min_duration:
+                segments.append({"start": start, "end": index, "label": current_label})
+            current_label = labels[index]
+            start = index
+    if len(labels) - start >= min_duration:
+        segments.append({"start": start, "end": len(labels), "label": current_label})
+    return segments
+
+
 class TemporalContext:
     def __init__(self, max_seconds: float = 60.0, fps: float = 30.0) -> None:
         self._fps = fps
