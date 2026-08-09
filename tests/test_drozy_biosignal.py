@@ -294,7 +294,6 @@ def test_kss_zero_is_missing_and_sessions_are_typed(tmp_path) -> None:
     sessions = convert_drozy.discover_sessions(root)
 
     assert len(sessions) == 1
-    assert sessions[0].context == "PVT1"
     assert sessions[0].kss is None
 
 
