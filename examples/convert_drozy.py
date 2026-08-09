@@ -1,245 +1,416 @@
-"""DROZY データセット → manifest 変換器。
-
-この実装は、DROZY の PSG・PVT・KSS を既存の manifest 形式へ落とすための入口です。
-初期版では、PSG を簡易特徴量に変換し、LoD を生成したうえで、区間圧縮して manifest を書き出します。
-"""
+"""DROZYのPSGから眠気区間を生成し、既存ingest用manifestへ変換する。"""
 
 from __future__ import annotations
 
-import csv
-import json
-import sys
+import argparse
+import math
+from collections import defaultdict
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from alertness.bio.psg import build_psg_feature_series, read_psg_signal
-from alertness.calibration.baseline import calibrate_with_pvt_kss, normalize_feature_series
-from alertness.classifier.cds import compute_cds
-from alertness.classifier.lod import classify_lod
+from alertness.bio.psg import PsgFeature, extract_psg_features, read_psg
+from alertness.bio.pvt import (
+    PvtSummary,
+    impairment_from_baseline,
+    read_pvt,
+    summarize_pvt,
+    summarize_pvt_windows,
+)
+from alertness.calibration.baseline import BaselineStats, fit_baseline, normalize_features
+from alertness.classifier.cds import DEFAULT_WEIGHTS, compute_cds
+from alertness.classifier.lod import calibrate_thresholds
+from alertness.config import load_config
 from alertness.ingest.mapping import segment, write_manifest
-from alertness.temporal import build_manifest_segments, smooth_labels
+from alertness.temporal import smooth_lod_segments
 
 
-def discover_sessions(root: Path) -> list[dict[str, Any]]:
-    """DROZY の実データ構造に合わせて session を発見する。"""
-    sessions: list[dict[str, Any]] = []
-    if not root.exists():
-        return sessions
+# drowsiness は用途非依存の軸（colab の CONTEXT_FREE_AXES）なので、空でも学習に影響しない。
+CONTEXT = ""
 
-    psg_dir = root / "psg"
-    pvt_dir = root / "pvt-rt"
-    timestamps_dir = root / "timestamps"
-    videos_dir = root / "videos_i8"
 
-    psg_files: dict[str, Path] = {}
-    pvt_files: dict[str, Path] = {}
-    timestamp_files: dict[str, Path] = {}
-    video_files: dict[str, Path] = {}
+@dataclass(frozen=True)
+class DrozySession:
+    subject: str
+    test: int
+    session_id: str
+    video: Path | None
+    psg: Path | None
+    pvt: Path | None
+    timestamps: Path | None
+    kss: float | None
 
-    if any([psg_dir.exists(), pvt_dir.exists(), timestamps_dir.exists(), videos_dir.exists()]):
-        psg_files = {p.stem: p for p in psg_dir.glob("*.edf") if p.is_file()} if psg_dir.exists() else {}
-        pvt_files = {p.stem: p for p in pvt_dir.glob("*.csv") if p.is_file()} if pvt_dir.exists() else {}
-        timestamp_files = {p.stem: p for p in timestamps_dir.glob("*.txt") if p.is_file()} if timestamps_dir.exists() else {}
-        video_files = {p.stem: p for p in videos_dir.glob("*.mp4") if p.is_file()} if videos_dir.exists() else {}
+    def __getitem__(self, key: str) -> Any:
+        """以前のdict型セッションを参照する利用者向けの読み取り互換。"""
+        aliases = {"session": "session_id", "eeg": "psg", "eog": "psg"}
+        return getattr(self, aliases.get(key, key))
 
-    if not (psg_files or pvt_files or timestamp_files or video_files):
-        for subject_dir in sorted(root.iterdir()):
-            if not subject_dir.is_dir():
+
+@dataclass(frozen=True)
+class SessionAnalysis:
+    session: DrozySession
+    features: tuple[PsgFeature, ...]
+    duration_seconds: float
+    pvt_summary: PvtSummary
+    pvt_windows: tuple[tuple[float, PvtSummary], ...] = ()
+
+
+@dataclass(frozen=True)
+class ConversionResult:
+    manifest: dict[str, Any]
+    mean_cds: float
+    pvt_impairment: float
+    kss: float | None
+
+
+def _files_by_stem(directory: Path, pattern: str) -> dict[str, Path]:
+    if not directory.is_dir():
+        return {}
+    return {
+        path.stem: path
+        for path in directory.glob(pattern)
+        if path.is_file() and not path.name.startswith((".", "._"))
+    }
+
+
+def read_kss(root: Path) -> dict[tuple[str, int], float | None]:
+    """KSS.txtの14行×3列を被験者・テストへ対応付ける。0は欠損。"""
+    path = root / "KSS.txt"
+    if not path.is_file():
+        return {}
+    output: dict[tuple[str, int], float | None] = {}
+    subject = 0
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        values: list[float] = []
+        for token in line.replace(",", " ").split():
+            try:
+                values.append(float(token))
+            except ValueError:
                 continue
-            for session_dir in sorted(subject_dir.iterdir()):
-                if not session_dir.is_dir():
-                    continue
-                files = {p.name: p for p in session_dir.iterdir() if p.is_file()}
-                if not files:
-                    continue
-                video_path = next((p for p in files.values() if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv"}), None)
-                eeg_path = next((p for p in files.values() if "eeg" in p.name.lower()), None)
-                eog_path = next((p for p in files.values() if "eog" in p.name.lower()), None)
-                pvt_path = next((p for p in files.values() if "pvt" in p.name.lower()), None)
-                sessions.append(
-                    {
-                        "subject": subject_dir.name,
-                        "session": session_dir.name,
-                        "root": session_dir,
-                        "video": video_path,
-                        "video_fps": None,
-                        "eeg": eeg_path,
-                        "eog": eog_path,
-                        "psg": eeg_path or eog_path,
-                        "pvt": pvt_path,
-                        "timestamps": None,
-                        "kss": None,
-                    }
-                )
-        return sessions
-
-    session_ids = sorted(set(psg_files) | set(pvt_files) | set(timestamp_files) | set(video_files))
-    for session_id in session_ids:
-        psg_path = psg_files.get(session_id)
-        pvt_path = pvt_files.get(session_id)
-        timestamp_path = timestamp_files.get(session_id)
-        video_path = video_files.get(session_id)
-        if not (psg_path or pvt_path or timestamp_path or video_path):
+        if not values:
             continue
+        subject += 1
+        for test, value in enumerate(values[:3], start=1):
+            output[(str(subject), test)] = value if 1.0 <= value <= 9.0 else None
+    return output
 
-        subject_name = session_id.split("-", 1)[0] if "-" in session_id else session_id
+
+def _parse_session_id(session_id: str) -> tuple[str, int] | None:
+    parts = session_id.rsplit("-", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        test = int(parts[1])
+    except ValueError:
+        return None
+    if test not in (1, 2, 3):
+        return None
+    return parts[0], test
+
+
+def discover_sessions(root: Path) -> list[DrozySession]:
+    """公式のフラットなDROZYツリーから、存在する全セッション候補を発見する。"""
+    psg = _files_by_stem(root / "psg", "*.edf")
+    pvt = _files_by_stem(root / "pvt-rt", "*.csv")
+    timestamps = _files_by_stem(root / "timestamps", "*.txt")
+    videos = _files_by_stem(root / "videos_i8", "*.mp4")
+    kss = read_kss(root)
+    session_ids = sorted(set(psg) | set(pvt) | set(timestamps) | set(videos))
+    sessions: list[DrozySession] = []
+    for session_id in session_ids:
+        parsed = _parse_session_id(session_id)
+        if parsed is None:
+            continue
+        subject, test = parsed
         sessions.append(
-            {
-                "subject": subject_name or session_id,
-                "session": session_id,
-                "root": root,
-                "video": video_path,
-                "video_fps": None,
-                "eeg": psg_path,
-                "eog": psg_path,
-                "psg": psg_path,
-                "pvt": pvt_path,
-                "timestamps": timestamp_path,
-                "kss": None,
-            }
+            DrozySession(
+                subject=subject,
+                test=test,
+                session_id=session_id,
+                video=videos.get(session_id),
+                psg=psg.get(session_id),
+                pvt=pvt.get(session_id),
+                timestamps=timestamps.get(session_id),
+                kss=kss.get((subject, test)),
+            )
         )
     return sessions
 
 
-def _read_signal(path: Path | None) -> list[float]:
-    if path is None or not path.exists():
-        return []
-    signal, _ = read_psg_signal(path)
-    return signal.tolist()
-
-
-def _read_pvt_series(path: Path | None) -> list[float]:
-    if path is None or not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        rows = list(csv.reader(handle))
+def read_video_timestamps(path: Path) -> list[float]:
+    """各行の末尾にある開始時からの経過ミリ秒を秒へ変換する。"""
     values: list[float] = []
-    for row in rows:
-        if not row:
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        parts = line.strip().replace(",", " ").split()
+        if not parts:
             continue
         try:
-            values.append(float(row[0]))
+            elapsed_ms = float(parts[-1])
         except ValueError:
             continue
-    return values
+        values.append(elapsed_ms / 1000.0)
+    if len(values) < 2:
+        raise ValueError(f"動画timestampsが2件以上ありません: {path}")
+    origin = values[0]
+    normalized = [value - origin for value in values]
+    if any(
+        current <= previous
+        for previous, current in zip(normalized[:-1], normalized[1:], strict=True)
+    ):
+        raise ValueError(f"動画timestampsが単調増加ではありません: {path}")
+    return normalized
 
 
-def _read_timestamp_series(path: Path | None) -> list[float]:
-    if path is None or not path.exists():
-        return []
-    values: list[float] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            parts = line.strip().split()
-            if len(parts) < 2:
-                continue
-            try:
-                values.append(float(parts[-1]))
-            except ValueError:
-                continue
-    return values
+def _video_duration(path: Path) -> float | None:
+    try:
+        import cv2
+    except ImportError:  # pragma: no cover - base dependency
+        return None
+    capture = cv2.VideoCapture(str(path))
+    try:
+        fps = float(capture.get(cv2.CAP_PROP_FPS))
+        frames = float(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        capture.release()
+    if fps <= 0 or frames <= 0:
+        return None
+    return frames / fps
 
 
-def infer_video_fps(session: dict[str, Any]) -> float:
-    """セッション情報から動画 FPS を推定する。"""
-    explicit = session.get("video_fps")
-    if explicit is not None:
-        try:
-            fps = float(explicit)
-        except (TypeError, ValueError):
-            fps = 0.0
-        if fps > 0:
-            return fps
-
-    video = session.get("video")
-    if isinstance(video, Path):
-        name = video.name.lower()
-        if "15" in name and "fps" in name:
-            return 15.0
-        if "30" in name and "fps" in name:
-            return 30.0
-
-    context = str(session.get("session", "")).lower()
-    if "15" in context:
-        return 15.0
-    if "30" in context:
-        return 30.0
-    return 30.0
-
-
-def build_manifest_for_session(session: dict[str, Any]) -> dict[str, Any]:
-    """セッション単位で LO D を生成し、manifest へ変換する。"""
-    eeg = _read_signal(session.get("eeg"))
-    eog = _read_signal(session.get("eog"))
-    if not eeg or not eog:
-        raise ValueError(f"PSG signal not found for {session['subject']}/{session['session']}")
-
-    pvt_values = _read_pvt_series(session.get("pvt"))
-    timestamps = _read_timestamp_series(session.get("timestamps"))
-    features = build_psg_feature_series(eeg, eog, sample_rate=512, window_seconds=1.0)
-    normalized = normalize_feature_series(features)
-    scores = compute_cds(normalized)
-    calibrated_scores = calibrate_with_pvt_kss(
-        scores,
-        pvt=pvt_values,
-        kss=timestamps,
-    )
-    labels = classify_lod(calibrated_scores)
-    smoothed = smooth_labels(labels, window=3)
-
-    video_fps = infer_video_fps(session)
-
-    mapped_segments = build_manifest_segments(
-        smoothed,
-        fps=video_fps,
-        min_duration_seconds=1.0,
-    )
-    manifest_segments = [
-        segment(start=float(item["start"]), end=float(item["end"]), drowsiness=str(item["label"]))
-        for item in mapped_segments
+def _required_paths(session: DrozySession) -> tuple[Path, Path, Path, Path]:
+    missing = [
+        name for name in ("video", "psg", "pvt", "timestamps") if getattr(session, name) is None
     ]
-    if not manifest_segments:
-        manifest_segments = [segment(start=0.0, end=1.0, drowsiness="none")]
+    if missing:
+        raise ValueError(f"必須モダリティがありません: {', '.join(missing)}")
+    return session.video, session.psg, session.pvt, session.timestamps  # type: ignore[return-value]
 
+
+def _feature_options(config: Mapping[str, Any]) -> dict[str, Any]:
+    drozy = config.get("drozy", {})
+    eeg = drozy.get("eeg", {})
+    eog = drozy.get("eog", {})
     return {
-        "video": str(session["video"].name if session.get("video") else "unknown.mp4"),
-        "subject": f"drozy_{session['subject']}",
-        "context": session["session"],
-        "segments": manifest_segments,
+        "window_seconds": float(drozy.get("window_seconds", 10.0)),
+        "stride_seconds": float(drozy.get("stride_seconds", 1.0)),
+        "eeg_low_hz": float(eeg.get("low_hz", 0.5)),
+        "eeg_high_hz": float(eeg.get("high_hz", 35.0)),
+        "eog_low_hz": float(eog.get("low_hz", 0.1)),
+        "eog_high_hz": float(eog.get("high_hz", 15.0)),
+        "eog_event_z": float(eog.get("event_z", 2.0)),
+        "blink_min_seconds": float(eog.get("blink_min_seconds", 0.08)),
+        "blink_max_seconds": float(eog.get("blink_max_seconds", 0.8)),
+        "microsleep_min_seconds": float(eog.get("microsleep_min_seconds", 0.5)),
     }
 
 
-def main(argv: list[str]) -> int:
-    root = Path(argv[1] if len(argv) > 1 else "data/DROZY")
-    if not root.exists():
-        print(f"データセットのフォルダが見つかりません: {root}", file=sys.stderr)
-        return 1
-
-    sessions = discover_sessions(root)
-    if not sessions:
-        print(f"{root} からセッションを見つけられませんでした。", file=sys.stderr)
-        return 1
-
-    out_dir = Path("data/manifests")
-    for session in sessions:
-        try:
-            manifest = build_manifest_for_session(session)
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
-            continue
-
-        manifest_path = out_dir / f"drozy_{session['subject']}_{session['session']}.json"
-        write_manifest(
-            manifest_path,
-            video=manifest["video"],
-            subject=manifest["subject"],
-            context=manifest["context"],
-            segments=manifest["segments"],
+def analyze_session(session: DrozySession, config: Mapping[str, Any]) -> SessionAnalysis:
+    video, psg_path, pvt_path, timestamp_path = _required_paths(session)
+    drozy = config.get("drozy", {})
+    recording = read_psg(psg_path, channel_aliases=drozy.get("channel_aliases"))
+    timestamps = read_video_timestamps(timestamp_path)
+    durations = [recording.duration_seconds, timestamps[-1]]
+    video_duration = _video_duration(video)
+    if video_duration is not None:
+        durations.append(video_duration)
+    duration = min(durations)
+    features = tuple(
+        feature
+        for feature in extract_psg_features(recording, **_feature_options(config))
+        if feature.timestamp <= duration and feature.valid
+    )
+    if len(features) < 2:
+        raise ValueError("同期後に有効なPSG特徴量が2件以上ありません")
+    pvt_config = drozy.get("pvt", {})
+    pvt_samples = read_pvt(pvt_path)
+    false_start_ms = float(pvt_config.get("false_start_ms", 100.0))
+    lapse_ms = float(pvt_config.get("lapse_ms", 500.0))
+    pvt_summary = summarize_pvt(
+        pvt_samples,
+        false_start_ms=false_start_ms,
+        lapse_ms=lapse_ms,
+    )
+    pvt_windows = tuple(
+        summarize_pvt_windows(
+            pvt_samples,
+            window_seconds=float(pvt_config.get("window_seconds", 20.0)),
+            false_start_ms=false_start_ms,
+            lapse_ms=lapse_ms,
         )
-        print(f"{session['subject']}/{session['session']}: wrote {manifest_path}")
+    )
+    return SessionAnalysis(
+        session,
+        features,
+        duration,
+        pvt_summary,
+        pvt_windows,
+    )
 
-    return 0
+
+def build_manifest_for_session(
+    analysis: SessionAnalysis,
+    baseline: BaselineStats,
+    pvt_baseline: PvtSummary,
+    config: Mapping[str, Any],
+) -> ConversionResult:
+    drozy = config.get("drozy", {})
+    cds_config = drozy.get("cds", {})
+    normalized = normalize_features(analysis.features, baseline)
+    scores = compute_cds(
+        normalized,
+        weights={
+            name: float(value) for name, value in cds_config.get("weights", DEFAULT_WEIGHTS).items()
+        },
+        sigmoid_center=float(cds_config.get("sigmoid_center", 0.0)),
+        sigmoid_scale=float(cds_config.get("sigmoid_scale", 1.0)),
+    )
+    impairment = impairment_from_baseline(analysis.pvt_summary, pvt_baseline)
+    lod = drozy.get("lod", {})
+    thresholds = calibrate_thresholds(
+        [float(value) for value in lod.get("thresholds", (20.0, 50.0, 75.0))],
+        impairment,
+        gain=float(lod.get("pvt_gain", 5.0)),
+        max_shift=float(lod.get("pvt_max_shift", 10.0)),
+    )
+    temporal = drozy.get("temporal", {})
+    mapped = smooth_lod_segments(
+        scores,
+        thresholds=thresholds,
+        timestamps=[feature.timestamp for feature in analysis.features],
+        duration_seconds=analysis.duration_seconds,
+        stride_seconds=float(drozy.get("stride_seconds", 1.0)),
+        median_seconds=float(temporal.get("median_seconds", 5.0)),
+        hysteresis_margin=float(temporal.get("hysteresis_margin", 5.0)),
+        min_duration_seconds=float(temporal.get("min_duration_seconds", 5.0)),
+    )
+    if not mapped:
+        raise ValueError("有効なLoD区間を生成できませんでした")
+    manifest_segments = [
+        segment(
+            float(item["start"]),
+            float(item["end"]),
+            drowsiness=str(item["label"]),
+        )
+        for item in mapped
+    ]
+    manifest = {
+        "video": analysis.session.video.as_posix(),
+        "subject": f"drozy_{analysis.session.subject}",
+        "context": CONTEXT,
+        "segments": manifest_segments,
+    }
+    return ConversionResult(
+        manifest=manifest,
+        mean_cds=sum(scores) / len(scores),
+        pvt_impairment=impairment,
+        kss=analysis.session.kss,
+    )
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="DROZY PSGから眠気manifestを生成する")
+    parser.add_argument("root", type=Path, help="DROZYデータセットのルート")
+    parser.add_argument("--config", default="config/default.yaml", help="設定ファイル")
+    parser.add_argument("--out", type=Path, default=Path("data/manifests"), help="出力先")
+    parser.add_argument("--subject", help="指定した被験者だけ変換")
+    parser.add_argument("--force", action="store_true", help="既存manifestを上書き")
+    return parser
+
+
+def _pearson(rows: Sequence[tuple[float, float]]) -> float | None:
+    if len(rows) < 2:
+        return None
+    left_mean = sum(left for left, _right in rows) / len(rows)
+    right_mean = sum(right for _left, right in rows) / len(rows)
+    numerator = sum((left - left_mean) * (right - right_mean) for left, right in rows)
+    left_scale = math.sqrt(sum((left - left_mean) ** 2 for left, _right in rows))
+    right_scale = math.sqrt(sum((right - right_mean) ** 2 for _left, right in rows))
+    if left_scale <= 1e-12 or right_scale <= 1e-12:
+        return None
+    return numerator / (left_scale * right_scale)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    if not args.root.is_dir():
+        print(f"データセットのフォルダが見つかりません: {args.root}")
+        return 1
+    config = load_config(args.config)
+    sessions = discover_sessions(args.root)
+    if args.subject:
+        sessions = [session for session in sessions if session.subject == str(args.subject)]
+    grouped: dict[str, list[DrozySession]] = defaultdict(list)
+    for session in sessions:
+        grouped[session.subject].append(session)
+
+    written = 0
+    skipped = 0
+    validation: list[tuple[float, float | None, float]] = []
+    for subject, subject_sessions in sorted(grouped.items()):
+        analyzed: dict[int, SessionAnalysis] = {}
+        for session in sorted(subject_sessions, key=lambda item: item.test):
+            try:
+                analyzed[session.test] = analyze_session(session, config)
+            except (ImportError, OSError, ValueError) as exc:
+                print(f"SKIP {session.session_id}: {exc}")
+                skipped += 1
+        if 1 not in analyzed:
+            print(f"SKIP subject {subject}: PVT1基準を作成できません")
+            skipped += len(analyzed)
+            continue
+        if analyzed[1].pvt_summary.mean_reaction_ms is None:
+            print(f"SKIP subject {subject}: PVT1に通常反応がなく、PVT基準を作成できません")
+            skipped += len(analyzed)
+            continue
+        try:
+            baseline = fit_baseline(
+                analyzed[1].features,
+                baseline_seconds=float(config.get("drozy", {}).get("baseline_seconds", 120.0)),
+            )
+        except ValueError as exc:
+            print(f"SKIP subject {subject}: {exc}")
+            skipped += len(analyzed)
+            continue
+        for _test, analysis in sorted(analyzed.items()):
+            out_path = args.out / f"drozy_{subject}_{analysis.session.session_id}.json"
+            if out_path.exists() and not args.force:
+                print(f"SKIP {analysis.session.session_id}: 既存 {out_path}")
+                skipped += 1
+                continue
+            try:
+                result = build_manifest_for_session(
+                    analysis, baseline, analyzed[1].pvt_summary, config
+                )
+                write_manifest(out_path, **result.manifest)
+            except (OSError, ValueError) as exc:
+                print(f"SKIP {analysis.session.session_id}: {exc}")
+                skipped += 1
+                continue
+            written += 1
+            validation.append((result.mean_cds, result.kss, result.pvt_impairment))
+            pvt = analysis.pvt_summary
+            mean_rt = (
+                "欠損" if pvt.mean_reaction_ms is None else f"{pvt.mean_reaction_ms:.1f}ms"
+            )
+            print(
+                f"WROTE {out_path}: CDS={result.mean_cds:.1f}, "
+                f"PVT悪化={result.pvt_impairment:+.3f}, KSS={result.kss}, "
+                f"PVT=[総数={pvt.valid_count + pvt.false_start_count}, "
+                f"通常={pvt.normal_count}, false start={pvt.false_start_count}, "
+                f"lapse={pvt.lapse_count}, 平均RT={mean_rt}, lapse率={pvt.lapse_rate:.3f}]"
+            )
+    if validation:
+        kss_rows = [row for row in validation if row[1] is not None]
+        print(f"検証対象: PVT={len(validation)}セッション, KSS={len(kss_rows)}セッション")
+        pvt_correlation = _pearson([(cds, impairment) for cds, _kss, impairment in validation])
+        kss_correlation = _pearson([(cds, float(kss)) for cds, kss, _pvt in kss_rows])
+        pvt_text = "算出不可" if pvt_correlation is None else f"{pvt_correlation:+.3f}"
+        kss_text = "算出不可" if kss_correlation is None else f"{kss_correlation:+.3f}"
+        print(f"方向性相関: CDS-PVT={pvt_text}, CDS-KSS={kss_text}（正が期待方向）")
+    print(f"完了: 生成={written}, スキップ={skipped}")
+    return 0 if written else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv))
+    raise SystemExit(main())

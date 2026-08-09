@@ -1,21 +1,36 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
+DEFAULT_WEIGHTS = {
+    "theta": 0.35,
+    "alpha": 0.25,
+    "beta": -0.20,
+    "di": 0.25,
+    "sem": 0.20,
+    "blink_duration": 0.15,
+    "microsleep_duration": 0.20,
+}
 
-def compute_cds(features: Sequence[dict[str, float]]) -> list[float]:
-    """単純な線形統合で CDS を算出する。"""
+
+def compute_cds(
+    features: Sequence[dict[str, float]],
+    *,
+    weights: dict[str, float] | None = None,
+    sigmoid_center: float = 0.0,
+    sigmoid_scale: float = 1.0,
+) -> list[float]:
+    """符号付き特徴量を統合し、シグモイドで0〜100のCDSへ写す。"""
+    if sigmoid_scale <= 0:
+        raise ValueError("sigmoid_scale は正の値である必要があります")
+    active_weights = weights or DEFAULT_WEIGHTS
     scores: list[float] = []
     for item in features:
-        theta = item.get("theta", 0.0)
-        alpha = item.get("alpha", 0.0)
-        beta = item.get("beta", 0.0)
-        di = item.get("di", 0.0)
-        sem = item.get("sem", 0.0)
-        blink_duration = item.get("blink_duration", 0.0)
-        microsleep_duration = item.get("microsleep_duration", 0.0)
-
-        raw = 0.35 * theta + 0.25 * alpha + 0.25 * di + 0.20 * sem + 0.15 * blink_duration + 0.20 * microsleep_duration - 0.20 * beta
-        score = max(0.0, min(100.0, raw * 10.0))
+        raw = sum(
+            float(weight) * float(item.get(name, 0.0)) for name, weight in active_weights.items()
+        )
+        exponent = max(-60.0, min(60.0, -(raw - sigmoid_center) / sigmoid_scale))
+        score = 100.0 / (1.0 + math.exp(exponent))
         scores.append(float(score))
     return scores

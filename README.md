@@ -105,6 +105,22 @@ CSVは `runs\ingested\` に出る（`--out` で変更可）。列は自前収録
 どのラベルをどの段階に写すか＝アノテ規約は `docs\annotation-guide.md` に集約する（自前収録の
 ラベリングもこの規約に従う）。
 
+### DROZYのPSGから眠気ラベルを生成する
+
+DROZY変換だけはEDF/信号処理用の追加依存を使う。通常のWebカメラ実行には不要。
+
+```bat
+pip install -e ".[drozy]"
+python examples\convert_drozy.py path\to\DROZY --out data\manifests
+python -m alertness.ingest --manifests data\manifests --out runs\ingested
+```
+
+1段目はPSGを主な教師情報、PVTを境界校正、KSSを検証情報として眠気区間manifestを作る。
+2段目は既存ingestで動画特徴量と `label_drowsiness` を持つCanonical CSVへ変換する。
+変換パラメータは `config\default.yaml` の `drozy`、既存manifestの上書きは `--force`、
+被験者の限定は `--subject ID` で指定する。実データでPVT/KSSとの整合を確認するまでは、
+生成ラベルを生理学的な正解として確定しないこと。
+
 ## 学習モデル（ML）で判定する
 
 既定はルールベース判定だが、学習済みモデルに差し替えられる。モデル（`model.pkl`）の学習は

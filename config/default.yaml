@@ -156,3 +156,51 @@ feedback:
 recorder:
   enabled: false
   path: runs
+
+# DROZY PSGから眠気教師ラベルを生成するときだけ使う設定。
+# 通常のWebカメラ推論には影響しない。値を変更した場合は生成manifestを作り直すこと。
+drozy:
+  window_seconds: 10.0
+  stride_seconds: 1.0
+  baseline_seconds: 120.0
+  channel_aliases:
+    fz: [Fz, "EEG Fz-A1", FZ-A1]
+    cz: [Cz, "EEG Cz-A1", CZ-A1]
+    c3: [C3, "EEG C3-A1", C3-A1]
+    c4: [C4, "EEG C4-A1", C4-A1]
+    pz: [Pz, "EEG Pz-A1", PZ-A1]
+    horizontal_eog: ["Horizontal EOG", HEOG, EOG-H, "EOG H"]
+    vertical_eog: ["Vertical EOG", VEOG, EOG-V, "EOG V"]
+  eeg:
+    low_hz: 0.5
+    high_hz: 35.0
+  eog:
+    low_hz: 0.1
+    high_hz: 15.0
+    event_z: 2.0
+    blink_min_seconds: 0.08
+    blink_max_seconds: 0.8
+    microsleep_min_seconds: 0.5
+  pvt:
+    false_start_ms: 100.0
+    lapse_ms: 500.0
+    window_seconds: 20.0
+  cds:
+    weights:
+      theta: 0.35
+      alpha: 0.25
+      beta: -0.20
+      di: 0.25
+      sem: 0.20
+      blink_duration: 0.15
+      microsleep_duration: 0.20
+    sigmoid_center: 0.0
+    sigmoid_scale: 1.0
+  lod:
+    thresholds: [20.0, 50.0, 75.0]
+    pvt_gain: 5.0
+    pvt_max_shift: 10.0
+  temporal:
+    median_seconds: 5.0
+    hysteresis_margin: 5.0
+    min_duration_seconds: 5.0

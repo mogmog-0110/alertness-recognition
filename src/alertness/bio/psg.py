@@ -5,6 +5,26 @@ from pathlib import Path
 
 import numpy as np
 
+from .psg_recording import (
+    DEFAULT_CHANNEL_ALIASES,
+    PsgFeature,
+    PsgRecording,
+    extract_psg_features,
+    read_psg,
+    resolve_channels,
+)
+
+__all__ = [
+    "DEFAULT_CHANNEL_ALIASES",
+    "PsgFeature",
+    "PsgRecording",
+    "build_psg_feature_series",
+    "extract_psg_features",
+    "read_psg",
+    "read_psg_signal",
+    "resolve_channels",
+]
+
 
 def read_psg_signal(path: str | Path, *, channel: str | None = None) -> tuple[np.ndarray, int]:
     """EDF もしくは簡易テキストから信号を読み込む。"""
@@ -16,7 +36,9 @@ def read_psg_signal(path: str | Path, *, channel: str | None = None) -> tuple[np
         try:
             import pyedflib
         except ImportError as exc:  # pragma: no cover - optional dependency
-            raise ImportError("pyedflib が必要です。pip install pyedflib で導入してください。") from exc
+            raise ImportError(
+                "pyedflib が必要です。pip install pyedflib で導入してください。"
+            ) from exc
         with pyedflib.EdfReader(str(p)) as reader:
             if channel is None:
                 channel = reader.getSignalLabels()[0]
@@ -54,8 +76,10 @@ def build_psg_feature_series(
             continue
 
         spectrum = np.abs(np.fft.rfft(eeg_window))
-        theta = float(np.mean(spectrum[np.min([2, len(spectrum) - 1]) : np.min([3, len(spectrum)])]))
-        alpha = float(np.mean(spectrum[np.min([4, len(spectrum) - 1]) : np.min([5, len(spectrum)])]))
+        theta_values = spectrum[np.min([2, len(spectrum) - 1]) : np.min([3, len(spectrum)])]
+        alpha_values = spectrum[np.min([4, len(spectrum) - 1]) : np.min([5, len(spectrum)])]
+        theta = float(np.mean(theta_values))
+        alpha = float(np.mean(alpha_values))
         beta = float(np.mean(spectrum[np.min([6, len(spectrum) - 1]) : np.min([7, len(spectrum)])]))
         sem = float(np.std(eog_window))
         blink_duration = float(np.mean(np.abs(eog_window)))

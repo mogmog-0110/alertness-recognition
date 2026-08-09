@@ -59,8 +59,28 @@ def test_normalize_feature_series_uses_baseline_statistics() -> None:
 
 
 def test_compute_cds_rises_for_sleepier_inputs() -> None:
-    sleepy = [{"theta": 2.0, "alpha": 1.8, "beta": 0.2, "di": 2.0, "sem": 1.2, "blink_duration": 0.7, "microsleep_duration": 0.5}]
-    alert = [{"theta": 0.3, "alpha": 0.2, "beta": 1.2, "di": 0.2, "sem": 0.1, "blink_duration": 0.1, "microsleep_duration": 0.0}]
+    sleepy = [
+        {
+            "theta": 2.0,
+            "alpha": 1.8,
+            "beta": 0.2,
+            "di": 2.0,
+            "sem": 1.2,
+            "blink_duration": 0.7,
+            "microsleep_duration": 0.5,
+        }
+    ]
+    alert = [
+        {
+            "theta": 0.3,
+            "alpha": 0.2,
+            "beta": 1.2,
+            "di": 0.2,
+            "sem": 0.1,
+            "blink_duration": 0.1,
+            "microsleep_duration": 0.0,
+        }
+    ]
 
     sleepy_score = compute_cds(sleepy)[0]
     alert_score = compute_cds(alert)[0]
@@ -99,34 +119,13 @@ def test_map_labels_to_video_segments_respects_video_fps() -> None:
     assert fifteen_fps[-1]["end"] == 4.0
 
 
-def test_build_manifest_for_session_uses_video_fps(monkeypatch) -> None:
-    session = {
-        "subject": "001",
-        "session": "s01",
-        "video": None,
-        "video_fps": 15.0,
-    }
-
-    monkeypatch.setattr(convert_drozy, "_read_signal", lambda path: [0.0, 0.0, 0.0, 0.0])
-    monkeypatch.setattr(
-        convert_drozy,
-        "build_psg_feature_series",
-        lambda eeg, eog, **kwargs: [{"theta": 1.0, "alpha": 1.0, "beta": 1.0, "di": 1.0, "sem": 1.0, "blink_duration": 1.0, "microsleep_duration": 0.0} for _ in range(2)],
+def test_timestamps_are_elapsed_milliseconds_not_kss(tmp_path) -> None:
+    path = tmp_path / "1-1.txt"
+    path.write_text(
+        "2014 11 26 10 08 39 297 23\n2014 11 26 10 08 39 331 57\n2014 11 26 10 08 39 363 89\n",
+        encoding="utf-8",
     )
-    monkeypatch.setattr(convert_drozy, "normalize_feature_series", lambda features: features)
-    monkeypatch.setattr(convert_drozy, "compute_cds", lambda features: [1.0, 50.0])
-    monkeypatch.setattr(convert_drozy, "classify_lod", lambda scores: ["none", "high"])
-    monkeypatch.setattr(convert_drozy, "smooth_labels", lambda labels, window=3: labels)
 
-    captured: dict[str, float] = {}
+    timestamps = convert_drozy.read_video_timestamps(path)
 
-    def fake_build_manifest_segments(labels, *, fps=30.0, min_duration_seconds=1.0):
-        captured["fps"] = fps
-        return [{"start": 0.0, "end": 1.0, "label": labels[0]}]
-
-    monkeypatch.setattr(convert_drozy, "build_manifest_segments", fake_build_manifest_segments)
-
-    manifest = convert_drozy.build_manifest_for_session(session)
-
-    assert captured["fps"] == 15.0
-    assert manifest["segments"][0]["end"] == 1.0
+    assert timestamps == [0.0, 0.034, 0.066]
