@@ -1,3 +1,16 @@
+"""DROZYのPsychomotor Vigilance Test（PVT）を読み、覚醒低下の補助指標へ集計する。
+
+公式ファイルの試験開始時刻と刺激・反応時刻の組から、反応時間と試験内経過時刻を復元する。
+false start、通常反応、lapseを設定可能な閾値で分け、通常反応の平均時間と有効反応中のlapse率を
+セッション全体または固定時間窓ごとに要約する。壊れた行や時系列の逆転は、誤った校正値を作ら
+ないようファイル名・行番号付きのエラーにする。
+
+DROZY変換ではPVT1の要約を被験者基準とし、他セッションの反応時間とlapse率の悪化量を
+``classifier.lod.calibrate_thresholds`` へ渡す。PVTはPSG由来CDSの特徴や教師ラベルそのものでは
+なく、段階境界の補正に限定して使う。時刻窓要約は局所的な診断・拡張用で、現行のmanifest生成
+はセッション要約を校正値として使用する。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

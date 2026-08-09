@@ -1,4 +1,19 @@
-"""DROZYのPSGから眠気区間を生成し、既存ingest用manifestへ変換する。"""
+"""DROZY の PSG を解析し、眠気区間を既存 ingest 用 manifest として出力する。
+
+この変換器は、公式データツリーにある動画、EDF（EEG/EOG）、PVT、動画 timestamps、KSS を
+セッションIDで対応付ける。EDFから得た窓単位の特徴量を被験者の PVT1 冒頭で基準化し、CDS
+（連続眠気スコア）へ統合した後、PVT1からの反応悪化量で LoD の段階境界を補正する。短い段階
+変化を時間方向に平滑化し、最終的に drowsiness 軸だけを持つ区間 manifest を生成する。
+
+PSG が眠気ラベルの主な根拠で、PVT は被験者・セッション差を反映する境界校正にだけ使う。
+主観指標の KSS は生成ラベルを直接変更せず、出力時の方向性検証に使う。PVT1、必須PSG
+チャンネル、動画同期情報のいずれかが欠けるセッションは補完せずスキップする。この方針と
+段階の意味は docs/annotation-guide.md、窓幅・特徴重み・境界・平滑化値は
+config/default.yaml の ``drozy`` セクションを正準とする。
+
+生成物は ``python -m alertness.ingest`` に渡し、動画特徴量と区間ラベルを持つ Canonical CSV
+へ変換する。通常のWebカメラ推論経路からは呼ばれず、DROZYを教師データ化するときだけ使う。
+"""
 
 from __future__ import annotations
 

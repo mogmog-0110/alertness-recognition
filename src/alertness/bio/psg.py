@@ -1,3 +1,15 @@
+"""PSG 関連APIの公開窓口と、配列・単一信号向けの簡易解析を提供する。
+
+DROZY変換で使う正式なEDF読込、チャンネル解決、窓特徴抽出、およびデータ型は
+``psg_recording`` から再公開し、呼び出し側が ``alertness.bio.psg`` だけに依存できるようにする。
+一方、``read_psg_signal`` と ``build_psg_feature_series`` は単一チャンネルや既に読み込まれた
+EEG/EOG配列を扱う軽量な入口で、簡易テキスト入力や互換用途・小規模テストを支える。
+
+manifest生成の本経路は複数の指定EEG/EOGチャンネルを検証する ``read_psg`` と
+``extract_psg_features`` を使う。簡易関数は同名の特徴キーを返すが、周波数ビンを概算する補助API
+であり、正式なDROZY信号処理や教師ラベル生成の代替ではない。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

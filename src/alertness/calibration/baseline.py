@@ -1,3 +1,15 @@
+"""PSG眠気特徴の被験者内基準化と、補助的なスコア校正を担う。
+
+DROZYは被験者間で信号振幅や特徴量の水準が異なるため、``fit_baseline`` が PVT1 冒頭の有効な
+PSG窓から各特徴の平均・標準偏差を求め、``normalize_features`` が後続セッションを同じ
+z-score空間へ写す。ゼロ分散の特徴は除外し、十分な基準標本がない被験者は変換側でスキップ
+できるよう例外を返す。この統計は ``examples/convert_drozy.py`` から CDS 計算の直前に使われる。
+
+``calibrate_with_pvt_kss`` と ``normalize_feature_series`` は、配列ベースの簡易パイプラインとの
+互換を保つ補助関数である。正式なDROZY manifest経路では、PVT/KSSをここでCDSへ加算せず、
+PVTは ``classifier.lod`` の境界補正、KSSは変換結果の検証に限定する。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

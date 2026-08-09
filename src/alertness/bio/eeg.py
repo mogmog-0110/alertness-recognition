@@ -1,3 +1,14 @@
+"""PSGのEEG窓に共通するフィルタリングと周波数帯域パワー計算を提供する。
+
+``bandpass`` はEEG/EOGの前処理で共有するButterworth帯域通過フィルタ、
+``relative_band_powers`` はWelch法のPSDから指定帯域が全帯域に占める比率を求める。DROZY経路では
+``psg_recording.extract_psg_features`` が各EEGチャンネルの theta/alpha/beta を計算するために
+使用し、EOG側も同じフィルタ関数を利用する。
+
+SciPyはDROZY変換時だけ必要な追加依存として遅延読込する。無効・一定の短い信号はNaNを返して
+上位の品質判定に伝え、短すぎてゼロ位相処理できない窓は因果フィルタへフォールバックする。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

@@ -1,3 +1,11 @@
+"""DROZY変換の公開・簡易APIを横断して確認する基本回帰テスト。
+
+データセットツリーからのセッション発見、配列ベースPSG特徴、簡易基準化、CDSとLoDの方向性、
+時間ラベルの平滑化・区間化・動画時刻への対応を、小さな合成入力で検証する。重いEDF依存なしで
+変換パイプライン各段の契約を素早く確認する層であり、実EDFや公式PVT形式を含む詳細な生体信号
+テストは ``test_drozy_biosignal.py`` が担当する。
+"""
+
 import numpy as np
 
 import examples.convert_drozy as convert_drozy

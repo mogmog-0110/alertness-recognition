@@ -1,3 +1,14 @@
+"""水平・垂直EOGの窓から、眠気判定に使う眼球運動特徴を抽出する。
+
+垂直EOGのロバストなz-score閾値超過区間から平均瞬目時間と長時間閉眼相当イベントを求め、
+水平EOGの正規化RMSから緩徐眼球運動（SEM）の強度を算出する。結果は ``EogFeatures`` として
+``psg_recording.extract_psg_features`` に返され、EEG帯域特徴とともにCDSへ統合される。
+
+イベント閾値や時間境界は ``config/default.yaml`` の ``drozy.eog`` から変換器経由で渡される。
+欠損・非有限入力はNaNとして上位のPSG窓を無効化し、変動がない有効入力はイベントなしの0を
+返す。この処理は動画からの瞬き検出ではなく、DROZYのPSG教師ラベル生成専用の信号処理である。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

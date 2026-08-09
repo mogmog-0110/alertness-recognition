@@ -1,3 +1,13 @@
+"""連続眠気スコア（CDS）を4段階の Level of Drowsiness（LoD）へ対応付ける。
+
+``calibrate_thresholds`` は、PVT1に対する反応時間・lapse率の悪化量を使い、眠気が悪化した
+セッションほど段階境界を設定範囲内で下げる。``classify_lod`` は3つの昇順境界によりCDSを
+none/low/medium/highへ離散化する。CDS自体の算出やPVT集計はこのモジュールの責務ではない。
+
+DROZY manifest経路では校正済み境界を時間平滑化処理へ渡し、短い遷移を除いてから区間化する。
+既定境界は単体利用向けであり、データ変換時は ``config/default.yaml`` の ``drozy.lod`` を使う。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Sequence

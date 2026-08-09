@@ -1,3 +1,14 @@
+"""基準化済みPSG特徴を、0〜100の連続眠気スコア（CDS）へ統合する。
+
+EEGの相対帯域パワーと眠気指標（theta、alpha、DI）、覚醒方向の beta、EOG由来のSEM・
+瞬目時間・長時間閉眼相当時間を符号付き重みで線形結合し、シグモイドで共通スケールへ写す。
+ここでは連続値の生成だけを担当し、none/low/medium/high の段階化や時間平滑化は行わない。
+
+主な呼び出し元は ``examples/convert_drozy.py`` で、被験者内基準化後の特徴を受け取る。実運用の
+重みとシグモイド設定は ``config/default.yaml`` の ``drozy.cds`` が正準で、ここにある既定値は
+設定が省略された場合と単体利用のためのフォールバックである。
+"""
+
 from __future__ import annotations
 
 import math
