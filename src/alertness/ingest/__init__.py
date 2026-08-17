@@ -6,13 +6,16 @@
 """
 
 from .manifest import ClipManifest, Segment, load_manifest, manifests_from
-from .runner import run_ingest, run_ingest_all
+from .runner import IngestBatchResult, IngestSkip, run_ingest, run_ingest_all, run_ingest_batch
 
 __all__ = [
     "ClipManifest",
+    "IngestBatchResult",
+    "IngestSkip",
     "Segment",
     "load_manifest",
     "manifests_from",
     "run_ingest",
     "run_ingest_all",
+    "run_ingest_batch",
 ]

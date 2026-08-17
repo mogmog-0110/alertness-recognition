@@ -137,16 +137,16 @@ def build_classifier(config: dict[str, Any]) -> Classifier:
     return CueClassifier(cues, policy)
 
 
-def build_rppg(config: dict[str, Any]):
+def build_rppg(config: dict[str, Any], fps: float | None = None):
     # rPPG は既定で無効。stress の特徴が要るときだけ config で有効にする。
     rcfg = config.get("rppg", {})
     if not rcfg.get("enabled", False):
         return None
     from .features.rppg import RppgEstimator
 
-    fps = config.get("camera", {}).get("target_fps", 30)
+    effective_fps = fps if fps is not None else config.get("camera", {}).get("target_fps", 30)
     return RppgEstimator(
-        fps=fps,
+        fps=effective_fps,
         window_seconds=rcfg.get("window_seconds", 10.0),
         min_bpm=rcfg.get("min_bpm", 42.0),
         max_bpm=rcfg.get("max_bpm", 180.0),
@@ -156,16 +156,16 @@ def build_rppg(config: dict[str, Any]):
     )
 
 
-def build_pipeline(config: dict[str, Any]) -> Pipeline:
-    fps = config.get("camera", {}).get("target_fps", 30)
-    temporal = TemporalContext(max_seconds=60.0, fps=fps)
+def build_pipeline(config: dict[str, Any], fps: float | None = None) -> Pipeline:
+    effective_fps = fps if fps is not None else config.get("camera", {}).get("target_fps", 30)
+    temporal = TemporalContext(max_seconds=60.0, fps=effective_fps)
     return Pipeline(
         detector=build_detector(config),
         extractor=FaceFeatureExtractor(),
         classifier=build_classifier(config),
         temporal=temporal,
         normalize_version=config.get("normalize", {}).get("version", 1),
-        rppg=build_rppg(config),
+        rppg=build_rppg(config, fps=effective_fps),
     )
 
 

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
+
+from alertness.contracts import Frame
 from alertness.ingest.manifest import ClipManifest, Segment
 from alertness.ingest.runner import _write_rows
 from alertness.ingest.segment_label import SegmentLabelProvider
+from alertness.sources.frame_rate import downsample_frames
 
 
 class _Frame:
@@ -60,3 +64,41 @@ def test_write_rows_propagates_axis_labels_per_frame():
         {"drowsiness": "high", "distraction": "none"},
         {},
     ]
+
+
+def test_write_rows_labels_the_resampled_csv_timestamps():
+    manifest = ClipManifest(
+        "v.mp4",
+        "s1",
+        "study",
+        (
+            Segment(0.0, 0.1, {"drowsiness": "none"}),
+            Segment(0.1, 0.2, {"drowsiness": "high"}),
+        ),
+    )
+    frames = [
+        Frame(np.zeros((1, 1, 3)), index, index / 30.0)
+        for index in range(7)
+    ]
+    sampled = list(downsample_frames(frames, 30.0, 15.0))
+    provider = SegmentLabelProvider(manifest)
+    sink = _Sink(provider)
+
+    written = _write_rows(_Pipeline(), _SourceFrameList(sampled), provider, sink)
+
+    assert written == 4
+    assert [frame.timestamp for frame in sampled] == [0.0, 1 / 15, 2 / 15, 3 / 15]
+    assert sink.seen == [
+        {"drowsiness": "none"},
+        {"drowsiness": "none"},
+        {"drowsiness": "high"},
+        {},
+    ]
+
+
+class _SourceFrameList:
+    def __init__(self, frames: list[Frame]) -> None:
+        self._frames = frames
+
+    def frames(self):
+        yield from self._frames

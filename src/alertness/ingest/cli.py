@@ -13,7 +13,7 @@ import argparse
 
 from ..config import load_config
 from .manifest import manifests_from
-from .runner import run_ingest_all
+from .runner import run_ingest_batch
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,14 +26,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
-    directories = run_ingest_all(config, manifests_from(args.manifests), args.out)
+    try:
+        result = run_ingest_batch(config, manifests_from(args.manifests), args.out)
+    except ValueError as exc:
+        print(f"取り込み失敗: {exc}")
+        return 1
 
-    if not directories:
+    for skipped in result.skipped:
+        print(f"SKIP {skipped.video}: {skipped.reason}")
+    if not result.directories:
         print("取り込む動画がありませんでした。")
         return 1
-    for directory in directories:
+    print(f"CSV FPS: {result.csv_fps:g}")
+    for directory in result.directories:
         print(f"取り込み完了 -> {directory}")
-    print(f"合計 {len(directories)} 本を取り込みました。")
+    print(
+        f"合計 {len(result.directories)} 本を取り込みました。"
+        f" スキップ={len(result.skipped)} 本"
+    )
     return 0
 
 

@@ -40,7 +40,6 @@ from alertness.config import load_config
 from alertness.ingest.mapping import segment, write_manifest
 from alertness.temporal import smooth_lod_segments
 
-
 # drowsiness は用途非依存の軸（colab の CONTEXT_FREE_AXES）なので、空でも学習に影響しない。
 CONTEXT = ""
 
