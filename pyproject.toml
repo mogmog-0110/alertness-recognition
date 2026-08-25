@@ -12,7 +12,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "pyright>=1.1"]
+# examples/ のデータセット変換・再ラベル用。本体(src)は pandas を使わないので依存に混ぜない。
+examples = ["pandas>=2.0"]
+# tests が examples/ のドライバを読み込むので、dev は examples を含む。
+dev = ["pytest>=8.0", "ruff>=0.6", "pyright>=1.1", "alertness-recognition[examples]"]
 ml = ["scikit-learn==1.9.0", "joblib>=1.3"]   # 版は colab の requirements と揃える（model.pkl の版ズレ防止）
 
 [project.scripts]
