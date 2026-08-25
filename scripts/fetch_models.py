@@ -35,7 +35,9 @@ _MIN_BYTES = 1_000_000
 def _validate(path: Path) -> None:
     size = path.stat().st_size
     if size < _MIN_BYTES:
-        raise ValueError(f"取得したファイルが小さすぎます（{size} バイト）。中身を確認してください: {path}")
+        raise ValueError(
+            f"取得したファイルが小さすぎます（{size} バイト）。中身を確認してください: {path}"
+        )
 
 
 def _install(source: Path | None, dest: Path) -> None:

@@ -1,6 +1,9 @@
-"""画面録画つきデモ起動。
+"""画面録画つきデモ起動。Windows 専用。
 
 ffmpeg(gdigrab) でデスクトップを録画しながら `python -m alertness` を起動する。
+gdigrab は Windows の GDI から画面を取り込む入力デバイスなので、他OSに対応する
+には avfoundation(macOS) / x11grab(Linux) への差し替えが要る。今は入れていない
+（デモ映像を作るのは Windows 機と決めているため）ので、他OSでは実行を断る。
 アプリが終了（q キーかウィンドウを閉じる）したら ffmpeg を正常終了させ、mp4 を閉じる。
 未知の引数はそのままアプリへ渡す（例: --video, --record, --config）。
 
@@ -20,6 +23,7 @@ import time
 from pathlib import Path
 
 _TITLE_PREFIX = "title="
+_IS_WINDOWS = sys.platform.startswith("win")
 
 
 def _ffmpeg_cmd(ffmpeg: str, region: str, fps: int, out: Path) -> list[str]:
@@ -56,15 +60,9 @@ def _wait_for_window(title: str, timeout: float) -> bool:
     窓が無い状態で gdigrab を起動すると "Can't find window" で即終了するため、
     ウィンドウ単位の録画ではこれで生成を待ってから ffmpeg を起動する。
     """
-    try:
-        import ctypes  # Windows 専用。gdigrab 自体が Windows 限定なので問題ない。
+    import ctypes  # windll は Windows のみ。main() が他OSを弾いてから呼ばれる。
 
-        find_window = ctypes.windll.user32.FindWindowW
-    except (ImportError, AttributeError):
-        # 判定手段が無い環境では少しだけ待って続行する。
-        time.sleep(1.0)
-        return True
-
+    find_window = ctypes.windll.user32.FindWindowW
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if find_window(None, title):
@@ -105,6 +103,14 @@ def main(argv: list[str] | None = None) -> int:
         help="gdigrab の入力。既定は画面全体。デモ窓だけなら title=Alertness",
     )
     args, passthrough = parser.parse_known_args(argv)
+
+    if not _IS_WINDOWS:
+        print(
+            "[record] 画面録画は Windows 専用です（ffmpeg の gdigrab を使うため）。\n"
+            "[record] 他OSでは OS の画面録画を併用し、デモ本体は"
+            " python -m alertness で起動してください。"
+        )
+        return 1
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
