@@ -24,7 +24,7 @@ class MediaPipeDetector:
         if not Path(model_path).exists():
             raise FileNotFoundError(
                 f"モデルが見つかりません: {model_path}\n"
-                "scripts\\setup.bat を実行してダウンロードしてください。"
+                "Windows: scripts\\setup.bat / その他: python scripts/fetch_models.py"
             )
         options = vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=model_path),

@@ -21,6 +21,36 @@ scripts\clean.bat      :: ライブラリ・モデル・キャッシュを削除
 scripts\uninstall.bat  :: ライブラリだけ消すか丸ごと消すかをメニューで選ぶ
 ```
 
+## セットアップ（macOS / Linux）
+
+`scripts\` は Windows の .bat なので、こちらは手順を並べる。Python 3.10〜3.12 が必要。
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+python scripts/fetch_models.py    # models/face_landmarker.task を取得
+```
+
+`fetch_models.py` は setup.bat と同じ URL から取る。既にあれば何もしないので、何度実行してもよい。
+ネットワークが使えない機械には、別の機械で取ったものを `--from` で渡す。
+
+```sh
+python scripts/fetch_models.py --from ~/Downloads/face_landmarker.task
+python scripts/fetch_models.py --force    # 取り直す
+```
+
+以降、`run.bat` などに相当する操作は venv を有効にして直接叩く。
+
+```sh
+python -m alertness            # run.bat
+pytest                         # test.bat
+ruff check . && pyright        # lint.bat / typecheck.bat
+```
+
+画面録画（`record.bat` / `python -m alertness.record_demo`）は ffmpeg の gdigrab を使う
+Windows 専用機能なので、こちらでは動かない。
+
 ## 動かす
 
 ```bat
