@@ -71,6 +71,11 @@ class HrElevationCue:
         self._held = 0.0  # 直前に出せた値
         self._held_at: float | None = None  # その時刻
 
+    def reset(self) -> None:
+        """安静基準と保持値を捨てる。前の人の安静心拍で次の人を測ると常時ずれる。"""
+        self._rest.reset()
+        self._held, self._held_at = 0.0, None
+
     def evaluate(self, obs: Observation) -> CueResult:
         progress = self._progress()
         now = obs.features.timestamp

@@ -12,16 +12,21 @@ from typing import Any
 from .classifier.classifier import CueClassifier
 from .classifier.cues.attention_buffer import AttentionBufferCue
 from .classifier.cues.blink import BlinkCue
+from .classifier.cues.blink_dynamics import BlinkDynamicsCue
+from .classifier.cues.blink_rate import BlinkRateCue
 from .classifier.cues.eye_closure import EyeClosureCue
+from .classifier.cues.face_absent import FaceAbsentCue
 from .classifier.cues.facial_tension import FacialTensionCue
 from .classifier.cues.gaze_off import GazeOffCue
 from .classifier.cues.gaze_scanning import GazeScanningCue
 from .classifier.cues.head_down import HeadDownCue
 from .classifier.cues.head_turn import HeadTurnCue
 from .classifier.cues.hr_elevation import HrElevationCue
+from .classifier.cues.nodding import NoddingCue
+from .classifier.cues.respiration import RespirationCue
 from .classifier.cues.yawn import YawnCue
 from .classifier.policies.rule_based import RuleBasedPolicy
-from .classifier.states import ALERT_ON, COMBINE, DimensionSpec
+from .classifier.states import ALERT_ON, COMBINE, DEFAULT_RELEASE_MARGIN, DimensionSpec
 from .features.extractor import FaceFeatureExtractor
 from .labeling import LabelState
 from .pipeline import Pipeline
@@ -32,6 +37,9 @@ from .temporal import TemporalContext
 _CUE_REGISTRY = {
     "eye_closure": EyeClosureCue,
     "blink": BlinkCue,
+    "blink_dynamics": BlinkDynamicsCue,
+    "nodding": NoddingCue,
+    "face_absent": FaceAbsentCue,
     "yawn": YawnCue,
     "head_down": HeadDownCue,
     "head_turn": HeadTurnCue,
@@ -40,10 +48,14 @@ _CUE_REGISTRY = {
     "attention_buffer": AttentionBufferCue,
     "hr_elevation": HrElevationCue,
     "facial_tension": FacialTensionCue,
+    "respiration": RespirationCue,
+    "blink_rate": BlinkRateCue,
 }
 
 
-def build_source(config: dict[str, Any], video: str | None = None) -> FrameSource:
+def build_source(
+    config: dict[str, Any], video: str | None = None, realtime: bool = False
+) -> FrameSource:
     camera = config.get("camera", {})
     source = config.get("source", {})
     stype = "video" if video else source.get("type", "webcam")
@@ -63,7 +75,21 @@ def build_source(config: dict[str, Any], video: str | None = None) -> FrameSourc
         path = video or source.get("path")
         if not path:
             raise ValueError("source.type=video には path（または --video）が必要です。")
-        return VideoFileSource(path)
+        return VideoFileSource(path, realtime)
+    if stype == "iphone":
+        from .sources.iphone_ws import IPhoneLink, IPhoneSource
+
+        net = source.get("iphone", {})
+        link = IPhoneLink(net.get("host", "0.0.0.0"), int(net.get("port", 8765)))
+        link.wait_ready()  # 番号が使用中なら、繋がらない症状ではなくここで分かる
+        return IPhoneSource(link)
+    if stype == "mjpeg":
+        from .sources.mjpeg import MjpegSource
+
+        url = source.get("url", "")
+        if not url:
+            raise ValueError("source.type=mjpeg には url（ストリームのURL）が必要です。")
+        return MjpegSource(url, source.get("timeout", 5.0))
     raise ValueError(f"未知の source type: {stype}")
 
 
@@ -98,6 +124,8 @@ def _dimension_specs(config: dict[str, Any]) -> list[DimensionSpec]:
                 alert_on,
                 str(dim.get("alert_name", "")),
                 combine,
+                int(dim.get("min_agree", 2)),
+                float(dim.get("release_margin", DEFAULT_RELEASE_MARGIN)),
             )
         )
     return specs
@@ -132,7 +160,10 @@ def build_classifier(config: dict[str, Any]) -> Classifier:
         cues.append(_CUE_REGISTRY[name](**params))
 
     policy = RuleBasedPolicy(
-        _dimension_specs(config), weights, policy_cfg.get("hysteresis_frames", 8)
+        _dimension_specs(config),
+        weights,
+        policy_cfg.get("attack_frames", 2),
+        policy_cfg.get("release_frames", 20),
     )
     return CueClassifier(cues, policy)
 
@@ -153,6 +184,10 @@ def build_rppg(config: dict[str, Any]):
         hrv_min_quality=rcfg.get("hrv_min_quality", 0.25),
         hrv_enabled=rcfg.get("hrv_enabled", False),
         hrv_upsample=rcfg.get("hrv_upsample", 16),
+        resp_enabled=rcfg.get("resp_enabled", True),
+        resp_window_seconds=rcfg.get("resp_window_seconds", 30.0),
+        resp_min_rpm=rcfg.get("resp_min_rpm", 6.0),
+        resp_max_rpm=rcfg.get("resp_max_rpm", 30.0),
     )
 
 
@@ -186,7 +221,13 @@ def build_sinks(
     labels: LabelState,
     window: bool = True,
     subject: str = "",
+    source: FrameSource | None = None,
 ) -> FeedbackSink:
+    """出力先を束ねる。
+
+    source を渡すのは、iPhone 経路が映像と結果で同じ接続を使うため。入力側が持っている
+    接続をここから参照する。webcam など、返す先を持たない入力では何も足さない。
+    """
     sinks: list[FeedbackSink] = []
     feedback = config.get("feedback", {})
     recorder = config.get("recorder", {})
@@ -208,6 +249,10 @@ def build_sinks(
                 feedback.get("timeline", ""),
                 feedback.get("timeline_seconds", 300.0),
                 feedback.get("window_width", 0),
+                feedback.get("alert_min_interval_seconds", 1.5),
+                feedback.get("alert_escalate_factor", 0.7),
+                feedback.get("driver_view", False),
+                feedback.get("driver_window_width", 0),
             )
         )
     if recording:
@@ -223,9 +268,29 @@ def build_sinks(
             )
         )
 
+    iphone = _iphone_sink(feedback, source)
+    if iphone is not None:
+        sinks.append(iphone)
+
     from .feedback.composite import CompositeSink
 
     return CompositeSink(sinks)
+
+
+def _iphone_sink(feedback: dict[str, Any], source: FrameSource | None):
+    if source is None or not feedback.get("iphone", True):
+        return None
+    from .sources.iphone_ws import IPhoneSource
+
+    if not isinstance(source, IPhoneSource):
+        return None
+    from .feedback.iphone_ws import IPhoneSink
+
+    return IPhoneSink(
+        source.link,
+        features=tuple(feedback.get("iphone_features", ())),
+        names=feedback.get("iphone_names", {}),
+    )
 
 
 def build_calibrator(config: dict[str, Any]):

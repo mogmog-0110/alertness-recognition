@@ -57,6 +57,30 @@ class Cue(Protocol):
 
 
 @runtime_checkable
+class Resettable(Protocol):
+    """溜めた状態を捨てられる部品。cue の安静基準や注意残高など。
+
+    運転者が交代すると、前の人の基準や残高は次の人に対して誤りになる。
+    再キャリブレーション時にこの口を通してまとめて捨てる。状態を持たない
+    実装は満たさなくてよく、呼び出し側が isinstance で選り分ける。
+    """
+
+    def reset(self) -> None: ...
+
+
+@runtime_checkable
+class Interruptible(Protocol):
+    """待ちを外から打ち切れる入力源。
+
+    ネットワーク越しの入力は、繋がっていない間 frames() が何も返さずに待ち続ける。
+    画面もキーも無い運転では SIGTERM で終わらせるしかないが、待ちに入ったままでは
+    終了の合図に気づけない。この口で待ちを解いてからループを畳む。
+    """
+
+    def interrupt(self) -> None: ...
+
+
+@runtime_checkable
 class DecisionPolicy(Protocol):
     """cue の結果を統合して最終判定を作る方針。ルール／機械学習など。"""
 

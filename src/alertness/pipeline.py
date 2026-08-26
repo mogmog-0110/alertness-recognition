@@ -35,6 +35,19 @@ class Pipeline:
     def set_profile(self, profile: CalibrationProfile) -> None:
         self._profile = profile
 
+    def reset_state(self) -> None:
+        """溜め込んだ状態を捨てる。再キャリブレーションの直前に呼ぶ。
+
+        新しい基準で正規化した値と、古い基準で正規化した履歴は混ぜられない。
+        判定側が持つ安静基準・注意残高も、別人には当てはまらない。
+        """
+        self._temporal.reset()
+        if self._rppg is not None:
+            self._rppg.reset()
+        reset = getattr(self._classifier, "reset", None)
+        if callable(reset):
+            reset()
+
     def observe(self, frame: Frame) -> Observation:
         landmarks = self._detector.detect(frame)
         raw = self._extractor.extract(landmarks, frame.timestamp)

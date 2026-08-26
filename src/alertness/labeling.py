@@ -11,10 +11,19 @@ from collections.abc import Sequence
 
 
 class LabelState:
-    """いま記録するラベルを保持する可変の入れ物。アプリが書き換え、録画が読む。"""
+    """いま記録するラベルを保持する可変の入れ物。アプリが書き換え、録画が読む。
+
+    軸別の段階ラベル(levels)を実際に埋めるのは、動画と区間ラベルの組から供給する
+    SegmentLabelProvider だけ。手で押す収録では空のままで、採点側は未アノテとして扱う。
+    読む側（録画・画面）が持っているか毎回確かめずに済むよう、空の形はここで定義する。
+    """
 
     def __init__(self, value: str = "") -> None:
         self.value = value
+        self.levels: dict[str, str] = {}
+
+    def apply(self, timestamp: float) -> None:
+        """その時刻のラベルへ進める。手で押す収録では進める先が無いので何もしない。"""
 
 
 def key_label_map(dimension_names: Sequence[str], awake: str = "awake") -> dict[int, str]:

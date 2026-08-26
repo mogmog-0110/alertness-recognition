@@ -16,7 +16,6 @@ class SegmentLabelProvider(LabelState):
     def __init__(self, manifest: ClipManifest) -> None:
         super().__init__("")
         self._manifest = manifest
-        self.levels: dict[str, str] = {}
 
     def apply(self, timestamp: float) -> None:
         self.levels = self._manifest.labels_at(timestamp)

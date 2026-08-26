@@ -13,6 +13,10 @@ USB 帯域が足りず 720p では 30fps 頭打ちになる。MJPG なら同じ�
 25ms なら 33+25=58ms、つまり 17fps しか出ない。取り込みを分ければ待ちと処理が重なるので、
 処理時間だけが上限になる。スレッドは常に最新の1枚だけを保持し、古いフレームは捨てる
 （判定は「いまの状態」を見るものなので、遅れて届く過去のフレームには価値がない）。
+
+読み取りに失敗しても取り込みは終わらせず、開き直して再接続を試みる。車載では配線が
+一瞬外れることがあり、そこで終了してしまうと以降ずっと無警告になる。装置が黙ることは
+誤警告よりも危険なので、諦めずに待ち続け、止まっていること自体は Watchdog が知らせる。
 """
 
 from __future__ import annotations
@@ -22,9 +26,12 @@ import time
 from collections.abc import Iterator
 
 import cv2
-import numpy as np
 
 from ..contracts import Frame
+from ._latest import LatestFrame
+
+_RECONNECT_MIN = 0.5  # 再接続の最初の待ち時間（秒）
+_RECONNECT_MAX = 5.0  # 再接続の待ち時間の上限（秒）
 
 
 class WebcamSource:
@@ -36,32 +43,40 @@ class WebcamSource:
         fps: float = 0.0,
         threaded: bool = True,
     ) -> None:
-        # Windows では DSHOW を使うと起動が速く安定する。
-        self._cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not self._cap.isOpened():
-            raise RuntimeError(
-                f"カメラ(index={index})を開けませんでした。接続と使用許可を確認してください。"
-            )
-        # 解像度より先に MJPG を要求する。順番を逆にすると解像度が戻される機種がある。
-        if fps > 0:
-            self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
-        if width:
-            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        if height:
-            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        if fps > 0:
-            self._cap.set(cv2.CAP_PROP_FPS, fps)
+        self._index = index
+        self._width = width
+        self._height = height
+        self._fps = fps
+        self._cap = self._open()
 
-        self._index = 0
+        self._frame_index = 0
         self._threaded = threaded
-        self._lock = threading.Lock()
-        self._latest: tuple[int, np.ndarray, float] | None = None  # (連番, 画像, 時刻)
-        self._grabbed = 0  # 取り込んだ枚数。既読と同じなら新しいフレームはまだ無い
+        self._frames = LatestFrame()
+        self._reconnects = 0
         self._stop = threading.Event()
         self._reader: threading.Thread | None = None
         if threaded:
             self._reader = threading.Thread(target=self._read_loop, daemon=True)
             self._reader.start()
+
+    def _open(self) -> cv2.VideoCapture:
+        # Windows では DSHOW を使うと起動が速く安定する。
+        cap = cv2.VideoCapture(self._index, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap.release()
+            raise RuntimeError(
+                f"カメラ(index={self._index})を開けませんでした。接続と使用許可を確認してください。"
+            )
+        # 解像度より先に MJPG を要求する。順番を逆にすると解像度が戻される機種がある。
+        if self._fps > 0:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+        if self._width:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._width)
+        if self._height:
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._height)
+        if self._fps > 0:
+            cap.set(cv2.CAP_PROP_FPS, self._fps)
+        return cap
 
     @property
     def actual(self) -> tuple[int, int, float]:
@@ -72,46 +87,69 @@ class WebcamSource:
             float(self._cap.get(cv2.CAP_PROP_FPS)),
         )
 
+    @property
+    def reconnects(self) -> int:
+        """再接続した回数。配線や電源を疑う材料として表示・記録に使う。"""
+        return self._reconnects
+
     def _read_loop(self) -> None:
+        backoff = _RECONNECT_MIN
         while not self._stop.is_set():
             ok, image = self._cap.read()
-            if not ok:
+            if ok:
+                backoff = _RECONNECT_MIN
+                self._frames.put(image, time.perf_counter())
+                continue
+            # 読めなかった。終了せず開き直す。ここで諦めると以降ずっと無警告になる。
+            if self._stop.wait(backoff):
                 break
-            with self._lock:
-                self._grabbed += 1
-                self._latest = (self._grabbed, image, time.perf_counter())
-        with self._lock:
-            self._latest = None  # 取り込みが終わったことを frames() に伝える
+            backoff = min(_RECONNECT_MAX, backoff * 2)
+            self._reconnect()
+
+    def _reconnect(self) -> None:
+        try:
+            self._cap.release()
+            self._cap = self._open()
+            self._reconnects += 1
+        except (RuntimeError, cv2.error):
+            # まだ挿さっていない。次の周回でまた試すので、ここでは何もしない。
+            pass
 
     def frames(self) -> Iterator[Frame]:
         if not self._threaded:
             yield from self._frames_direct()
             return
         served = 0
-        while True:
-            with self._lock:
-                latest = self._latest
-                stopped = self._stop.is_set()
-            if stopped or (
-                latest is None and self._reader is not None and not self._reader.is_alive()
-            ):
-                break
-            if latest is None or latest[0] == served:
+        while not self._stop.is_set():
+            latest = self._frames.take_newer_than(served)
+            if latest is None:
                 time.sleep(0.001)  # 次の1枚が届くまで少しだけ譲る
                 continue
             served, image, captured = latest
-            yield Frame(image=image, index=self._index, timestamp=captured, source_id="webcam")
-            self._index += 1
+            yield Frame(
+                image=image, index=self._frame_index, timestamp=captured, source_id="webcam"
+            )
+            self._frame_index += 1
 
     def _frames_direct(self) -> Iterator[Frame]:
-        while True:
+        # 非スレッド動作。こちらも読めなくなったら開き直す（振る舞いを揃える）。
+        backoff = _RECONNECT_MIN
+        while not self._stop.is_set():
             ok, image = self._cap.read()
             if not ok:
-                break
+                if self._stop.wait(backoff):
+                    break
+                backoff = min(_RECONNECT_MAX, backoff * 2)
+                self._reconnect()
+                continue
+            backoff = _RECONNECT_MIN
             yield Frame(
-                image=image, index=self._index, timestamp=time.perf_counter(), source_id="webcam"
+                image=image,
+                index=self._frame_index,
+                timestamp=time.perf_counter(),
+                source_id="webcam",
             )
-            self._index += 1
+            self._frame_index += 1
 
     def close(self) -> None:
         self._stop.set()

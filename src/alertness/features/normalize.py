@@ -30,8 +30,10 @@ def normalize_features(raw: Features, profile: CalibrationProfile, version: int 
     if "yaw" in v:
         v["yaw_rel"] = _wrap_deg(v["yaw"] - profile.head_pose_neutral.yaw)
     if "gaze_x" in v:
-        # 画面中心を見たときの基準位置からのズレ。
-        v["gaze_off"] = abs(v["gaze_x"] - profile.gaze_center[0])
+        # 画面中心を見たときの基準位置からのズレ。gaze_off は大きさだけ、gaze_dx は向き付き。
+        # 左右のどちらを見たかが分からないと、左ミラーと右ミラーと助手席を区別できない。
+        v["gaze_dx"] = v["gaze_x"] - profile.gaze_center[0]
+        v["gaze_off"] = abs(v["gaze_dx"])
 
     v["normalize_version"] = float(version)
     return Features(values=v, timestamp=raw.timestamp, face_present=True)

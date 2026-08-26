@@ -30,6 +30,7 @@ FEATURE_COLUMNS = (
     "pitch_rel",
     "yaw_rel",
     "gaze_off",
+    "gaze_dx",  # 向き付きの視線ズレ。左右のどちらを見たかは gaze_off では分からない
     "normalize_version",
     "jawOpen",
     "eyeBlinkLeft",
@@ -49,6 +50,8 @@ FEATURE_COLUMNS = (
     "hr_bpm",  # rPPG 由来（無効時は空）。stress モデルの特徴になり得る。
     "rppg_quality",
     "hrv_rmssd",  # rPPG 由来。良質な窓でだけ入る（機会的）ので欠けるのが普通。
+    "resp_rpm",  # rPPG 由来の呼吸数。窓(30秒)が埋まるまで空。
+    "resp_quality",
 )
 
 
@@ -103,7 +106,7 @@ class CsvRecorderSink:
         row["subject"] = self._subject
         row["label"] = self._labels.value
         # 軸別ラベルは、対応する provider だけが持つ（levels に無い軸は空＝未アノテ）。
-        levels = getattr(self._labels, "levels", {})
+        levels = self._labels.levels
         for column in self._label_columns:
             axis = column[len("label_") :]
             row[column] = levels.get(axis, "")

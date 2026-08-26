@@ -25,6 +25,11 @@ class TemporalContext:
     def append(self, features: Features) -> None:
         self._buf.append(features)
 
+    def reset(self) -> None:
+        """履歴を捨てる。再キャリブレーション後は正規化の基準が変わるため、
+        古いフレームの ear_norm などは新しい基準の値と混ぜられない。"""
+        self._buf.clear()
+
     def latest(self) -> Features | None:
         return self._buf[-1] if self._buf else None
 

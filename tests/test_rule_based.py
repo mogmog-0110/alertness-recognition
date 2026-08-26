@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from _helpers import make_observation
 
 from alertness.classifier.policies.rule_based import RuleBasedPolicy
@@ -12,8 +13,8 @@ LEVELS = {"low": 0.3, "medium": 0.6, "high": 0.8}
 
 
 def _policy(specs, weights):
-    # hysteresis_frames=1 なら平滑なし（その場の値がそのまま出る）。
-    return RuleBasedPolicy(specs, weights, hysteresis_frames=1)
+    # attack/release ともに 1 なら平滑なし（その場の値がそのまま出る）。
+    return RuleBasedPolicy(specs, weights, attack_frames=1, release_frames=1)
 
 
 def _obs():
@@ -126,3 +127,82 @@ def test_max_combination_still_fires_on_a_single_strong_cue():
         ],
     )
     assert result.dimensions["drowsiness"].level == Level.HIGH
+
+
+def test_alarm_rises_faster_than_it_falls():
+    # 安全側の装置なので、危険は速く出し、解除はゆっくりにする。
+    spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure",))
+    policy = RuleBasedPolicy([spec], {"eye_closure": 1.0}, attack_frames=2, release_frames=20)
+
+    high = CueResult("eye_closure", "drowsiness", 1.0, True, "")
+    calm = CueResult("eye_closure", "drowsiness", 0.0, False, "")
+
+    policy.decide(_obs(), [calm])  # 初期値 0 を置く
+    risen = policy.decide(_obs(), [high]).dimensions["drowsiness"].alarm
+    fallen_from = risen
+    fallen = policy.decide(_obs(), [calm]).dimensions["drowsiness"].alarm
+
+    assert risen > 0.5  # 1フレームで半分以上まで立ち上がる
+    assert fallen_from - fallen < risen  # 落ちる量は立ち上がりより小さい
+
+
+def test_level_needs_margin_to_step_down():
+    # 境界に張り付いた入力で段が往復すると、警告音が鳴り止み鳴り直す。
+    spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure",), release_margin=0.08)
+    policy = _policy([spec], {"eye_closure": 1.0})
+
+    def level_at(score):
+        cue = CueResult("eye_closure", "drowsiness", score, True, "")
+        return policy.decide(_obs(), [cue]).dimensions["drowsiness"].level
+
+    assert level_at(0.62) == Level.MEDIUM
+    assert level_at(0.58) == Level.MEDIUM  # 境界を少し割っても下げない
+    assert level_at(0.50) == Level.LOW  # margin を超えて下がったら落ちる
+
+
+def test_min_agree_discounts_a_lone_signal():
+    # 3本の cue のうち1本だけが兆候を出しても、満額の警告にはしない。
+    spec = DimensionSpec(
+        "stress",
+        LEVELS,
+        ("hr_elevation", "facial_tension", "respiration"),
+        combine="weighted",
+        min_agree=2,
+    )
+    policy = _policy([spec], {"hr_elevation": 1.0, "facial_tension": 1.0, "respiration": 1.0})
+    lone = policy.decide(
+        _obs(),
+        [
+            CueResult("hr_elevation", "stress", 1.0, True, ""),
+            CueResult("facial_tension", "stress", 0.0, False, ""),
+            CueResult("respiration", "stress", 0.0, False, ""),
+        ],
+    )
+    assert lone.dimensions["stress"].level < Level.MEDIUM
+
+
+def test_invalid_cues_do_not_dilute_a_weighted_axis():
+    # 測れていない cue を 0 として平均に数えると、残る cue がどれだけ強く出ても届かない。
+    spec = DimensionSpec(
+        "stress", LEVELS, ("hr_elevation", "facial_tension"), combine="weighted", min_agree=2
+    )
+    policy = _policy([spec], {"hr_elevation": 1.0, "facial_tension": 1.0})
+    result = policy.decide(
+        _obs(),
+        [
+            CueResult("hr_elevation", "stress", 0.0, False, "心拍なし", None, False),
+            CueResult("facial_tension", "stress", 0.9, False, "", None, True),
+        ],
+    )
+    # 有効なのは1本だけなので min_agree=2 に届かず割り引かれるが、
+    # 無効な cue のぶんまで薄められて 0.45 未満に潰れることはない。
+    assert result.dimensions["stress"].alarm == pytest.approx(0.45)
+
+
+def test_reset_clears_smoothing_and_levels():
+    spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure",))
+    policy = _policy([spec], {"eye_closure": 1.0})
+    policy.decide(_obs(), [CueResult("eye_closure", "drowsiness", 1.0, True, "")])
+    policy.reset()
+    after = policy.decide(_obs(), [CueResult("eye_closure", "drowsiness", 0.0, False, "")])
+    assert after.dimensions["drowsiness"].level == Level.NONE

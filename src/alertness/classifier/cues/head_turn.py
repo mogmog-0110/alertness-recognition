@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
-from ._support import true_fraction, window_values
+from ._support import time_fraction, window_values
 
 
 class HeadTurnCue:
@@ -19,12 +19,12 @@ class HeadTurnCue:
         if not obs.features.face_present:
             return CueResult(self.name, self.dimension, 0.0, False, "顔なし")
 
-        _, yaws = window_values(obs, "yaw_rel", self.sustained_seconds, 0.0)
+        times, yaws = window_values(obs, "yaw_rel", self.sustained_seconds, 0.0)
         if not yaws:
             return CueResult(self.name, self.dimension, 0.0, False, "")
 
         latest = abs(yaws[-1])
-        sustained = true_fraction([abs(y) > self.yaw_side_deg for y in yaws])
+        sustained = time_fraction(times, [abs(y) > self.yaw_side_deg for y in yaws])
         score = clamp(latest / self.yaw_side_deg) * sustained if self.yaw_side_deg > 0 else 0.0
         active = sustained >= 0.7 and latest > self.yaw_side_deg
         return CueResult(self.name, self.dimension, score, active, f"横向き {yaws[-1]:.0f}°")

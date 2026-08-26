@@ -15,7 +15,7 @@ from collections import deque
 
 import numpy as np
 
-from ..bio.hrv import rmssd, rr_intervals_ms
+from ..bio.hrv import plausible_rr, rmssd, rr_intervals_ms
 from ..bio.peaks import peak_times
 from ..contracts import FaceLandmarks, Features, Frame
 from ..features import landmark_ids as ids
@@ -84,6 +84,37 @@ def estimate_hr(
     return hr, quality
 
 
+def estimate_respiration(
+    signal: np.ndarray,
+    fs: float,
+    min_rpm: float = 6.0,
+    max_rpm: float = 30.0,
+) -> tuple[float, float]:
+    """脈波の低周波成分 → (呼吸数[回/分], 品質0..1)。
+
+    呼吸は脈波を心拍よりずっと低い周波数で揺らす（胸郭の動きが顔の位置と陰影を動かし、
+    加えて呼吸性洞性不整脈が拍の間隔を周期的に変える）。帯域が心拍と重ならないので、
+    同じ「帯域内の最強成分を探す」処理をそのまま低い帯域に当てれば取り出せる。
+
+    直線の傾きを先に抜く。照明のゆっくりした変化や姿勢の沈み込みは呼吸帯域の下端に
+    大きな電力を作り、抜かないと「呼吸 6 回/分」が常に最強のピークになってしまう。
+
+    窓は心拍より長く要る。30 回/分でも 2 秒に 1 周期しかないので、10 秒窓では
+    数周期しか入らず、周波数の分解能が呼吸数の刻みとして粗すぎる。
+    """
+    x = np.asarray(signal, dtype=float).ravel()
+    if x.size < 16 or fs <= 0:
+        return float("nan"), 0.0
+    return estimate_hr(x - _linear_trend(x), fs, min_rpm, max_rpm)
+
+
+def _linear_trend(x: np.ndarray) -> np.ndarray:
+    """最小二乗で当てた直線。ゆっくりしたドリフトを抜くのに使う。"""
+    t = np.arange(x.size, dtype=float)
+    slope, intercept = np.polyfit(t, x, 1)
+    return slope * t + intercept
+
+
 # ピークが雑音の底の何倍あれば「見えている」とみなすか。合成波での実測で、これ未満の
 # 推定は誤差が二桁 bpm に跳ね、これを境に急に安定する。
 _NOISE_FLOOR_RATIO = 4.5
@@ -145,6 +176,17 @@ def forehead_roi_box(
     return x0, y0, x1, y1
 
 
+def _with(features: Features, extra: dict[str, float]) -> Features:
+    """特徴量に値を足した新しい Features を返す。足すものが無ければそのまま返す。"""
+    if not extra:
+        return features
+    return Features(
+        values={**features.values, **extra},
+        timestamp=features.timestamp,
+        face_present=features.face_present,
+    )
+
+
 def _forehead_roi_mean(image: np.ndarray, landmarks: FaceLandmarks) -> np.ndarray | None:
     """額あたりの肌領域の平均色(RGB)を返す。取れなければ None。"""
     h, w = image.shape[:2]
@@ -172,6 +214,10 @@ class RppgEstimator:
         hrv_max_ratio: float = 0.15,
         hrv_max_ms: float = 150.0,
         hrv_upsample: int = 16,
+        resp_enabled: bool = True,
+        resp_window_seconds: float = 30.0,
+        resp_min_rpm: float = 6.0,
+        resp_max_rpm: float = 30.0,
     ) -> None:
         self._fps = fps
         self._min_bpm = min_bpm
@@ -194,6 +240,19 @@ class RppgEstimator:
         self._hrv_max_ms = hrv_max_ms
         self._hrv_min_quality = hrv_min_quality
         self._hrv_min_beats = hrv_min_beats
+        # 呼吸は心拍より長い窓を要る（30回/分でも2秒に1周期）。心拍用の窓を伸ばすと
+        # 心拍の側が変動とドリフトを拾って品質を落とすので、別のバッファを持つ。
+        self._resp_enabled = resp_enabled
+        self._resp_window = resp_window_seconds
+        self._resp_min_rpm = resp_min_rpm
+        self._resp_max_rpm = resp_max_rpm
+        self._resp_buf: deque[tuple[float, np.ndarray]] = deque()
+        self._resp_max_samples = max(16, int(resp_window_seconds * 240))
+
+    def reset(self) -> None:
+        """肌色バッファを捨てる。人が替わると額の色も脈も別物になる。"""
+        self._buf.clear()
+        self._resp_buf.clear()
 
     def augment(self, frame: Frame, landmarks: FaceLandmarks, features: Features) -> Features:
         if not landmarks.detected:
@@ -208,8 +267,9 @@ class RppgEstimator:
             self._buf.popleft()
         while len(self._buf) > self._max_samples:
             self._buf.popleft()
+        respiration = self._respiration(features.timestamp, rgb)
         if len(self._buf) < 8 or self._span() < self._min_span:
-            return features
+            return _with(features, respiration)
 
         times = np.array([t for t, _ in self._buf])
         series = np.array([c for _, c in self._buf])
@@ -223,7 +283,33 @@ class RppgEstimator:
         hrv = self._hrv(pulse, fs, quality)
         if hrv is not None:
             values["hrv_rmssd"] = hrv
+        values.update(respiration)
         return Features(values=values, timestamp=features.timestamp, face_present=True)
+
+    def _respiration(self, now: float, rgb: np.ndarray) -> dict[str, float]:
+        """呼吸数を推定して {resp_rpm, resp_quality} を返す。出せなければ空。"""
+        if not self._resp_enabled:
+            return {}
+        self._resp_buf.append((now, rgb))
+        cutoff = now - self._resp_window
+        while self._resp_buf and self._resp_buf[0][0] < cutoff:
+            self._resp_buf.popleft()
+        while len(self._resp_buf) > self._resp_max_samples:
+            self._resp_buf.popleft()
+
+        times = np.array([t for t, _ in self._resp_buf])
+        # 窓の8割は埋まっていること。呼吸1周期が最長10秒あるので、半端な窓では
+        # 一番低い帯域にピークが立つだけで、呼吸数を読んだことにならない。
+        if times.size < 16 or float(times[-1] - times[0]) < self._resp_window * 0.8:
+            return {}
+        series = np.array([c for _, c in self._resp_buf])
+        fs = (times.size - 1) / float(times[-1] - times[0])
+        rpm, quality = estimate_respiration(
+            pos_signal(series), fs, self._resp_min_rpm, self._resp_max_rpm
+        )
+        if math.isnan(rpm):
+            return {}
+        return {"resp_rpm": float(rpm), "resp_quality": float(quality)}
 
     def _hrv(self, pulse: np.ndarray, fs: float, quality: float) -> float | None:
         # 品質が高く窓が満杯（＝安定して長い）ときだけ HRV(RMSSD) を返す。それ以外は None。
@@ -235,8 +321,13 @@ class RppgEstimator:
         rr = rr_intervals_ms(times)
         if rr.size < self._hrv_min_beats:
             return None
-        value = rmssd(rr)
-        if math.isnan(value) or not self._plausible(value, rr):
+        # 取りこぼした拍が作る 2 倍の間隔を先に外す。外さずに RMSSD を出すと、1 回の
+        # 取りこぼしだけで値が跳ね、「変動が大きい＝リラックス」と正反対に読める。
+        valid = plausible_rr(rr)
+        if int(np.count_nonzero(valid)) < self._hrv_min_beats:
+            return None  # 妥当な拍が足りない＝この窓は測れていない
+        value = rmssd(rr, valid)
+        if math.isnan(value) or not self._plausible(value, rr[valid]):
             return None
         return float(value)
 
