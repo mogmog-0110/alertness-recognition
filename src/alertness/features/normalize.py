@@ -34,6 +34,8 @@ def normalize_features(raw: Features, profile: CalibrationProfile, version: int 
         # 左右のどちらを見たかが分からないと、左ミラーと右ミラーと助手席を区別できない。
         v["gaze_dx"] = v["gaze_x"] - profile.gaze_center[0]
         v["gaze_off"] = abs(v["gaze_dx"])
+    if "gaze_y" in v:
+        v["gaze_off_y"] = abs(v["gaze_y"] - profile.gaze_center[1])
 
     v["normalize_version"] = float(version)
     return Features(values=v, timestamp=raw.timestamp, face_present=True)

@@ -4,7 +4,7 @@ import pytest
 from _helpers import make_observation
 
 from alertness.classifier.ml_based import MLClassifier
-from alertness.contracts import Features, Level
+from alertness.contracts import CalibrationProfile, Features, Level, Observation, Pose
 
 
 class _StubModel:
@@ -69,6 +69,30 @@ def test_feature_vector_follows_bundle_order():
     assert model.seen_x == [[0.9, 0.3]]
 
 
+def test_binary_labels_map_to_levels():
+    # 2値で束ねて学習したモデル（calm/elevated）も Level に写せる。
+    clf = MLClassifier(_bundle({"label_stress": _StubModel("elevated")}, ["ear"]))
+    a = clf.assess(_obs({"ear": 0.1}))
+    assert a.dimensions["stress"].level is Level.HIGH  # elevated → 警告あり
+
+    clf = MLClassifier(_bundle({"label_stress": _StubModel("calm")}, ["ear"]))
+    a = clf.assess(_obs({"ear": 0.1}))
+    assert a.dimensions["stress"].level is Level.NONE  # calm → 警告なし
+
+
+def test_coarse3_mid_maps_to_medium():
+    clf = MLClassifier(_bundle({"label_stress": _StubModel("mid")}, ["ear"]))
+    assert clf.assess(_obs({"ear": 0.1})).dimensions["stress"].level is Level.MEDIUM
+
+
+def test_eda_label_source_maps_to_base_axis():
+    # EDA で作ったラベル列 label_stress_eda も、アプリの評価軸 stress として出す。
+    clf = MLClassifier(_bundle({"label_stress_eda": _StubModel("elevated")}, ["ear"]))
+    a = clf.assess(_obs({"ear": 0.1}))
+    assert set(a.dimensions) == {"stress"}
+    assert a.dimensions["stress"].level is Level.HIGH
+
+
 def test_missing_feature_defaults_to_zero():
     model = _StubModel("none")
     clf = MLClassifier(_bundle({"label_drowsiness": model}, ["ear", "jawOpen"]))
@@ -107,6 +131,49 @@ def test_unknown_level_rejected():
     clf = MLClassifier(_bundle({"label_drowsiness": _NoProbaModel("sleepy")}, ["ear"]))
     with pytest.raises(ValueError, match="未知のレベル"):
         clf.assess(_obs({"ear": 0.1}))
+
+
+def test_rest_centering_subtracts_baseline_when_flagged():
+    # rest_centered の bundle は、profile の安静基準を引いてからモデルに渡す。
+    model = _StubModel("none")
+    bundle = {
+        "models": {"label_stress": model},
+        "features": ["hr_bpm", "eyeSquintLeft"],
+        "rest_centered": True,
+    }
+    clf = MLClassifier(bundle)
+    profile = CalibrationProfile(
+        ear_open_baseline=0.3,
+        mar_neutral=0.0,
+        head_pose_neutral=Pose(0.0, 0.0, 0.0),
+        gaze_center=(0.5, 0.5),
+        face_scale=1.0,
+        baselines={"hr_bpm": 70.0, "eyeSquintLeft": 0.5},
+    )
+    obs = make_observation(Features(values={"hr_bpm": 82.0, "eyeSquintLeft": 0.6}, timestamp=1.0))
+    obs = Observation(obs.frame, obs.landmarks, obs.features, obs.history, profile)
+    clf.assess(obs)
+
+    assert model.seen_x == [[12.0, pytest.approx(0.1)]]  # 82-70, 0.6-0.5
+
+
+def test_no_centering_when_flag_absent():
+    # rest_centered が無い bundle は、profile に基準があっても引かない（絶対値のまま）。
+    model = _StubModel("none")
+    clf = MLClassifier(_bundle({"label_stress": model}, ["hr_bpm"]))
+    profile = CalibrationProfile(
+        ear_open_baseline=0.3,
+        mar_neutral=0.0,
+        head_pose_neutral=Pose(0.0, 0.0, 0.0),
+        gaze_center=(0.5, 0.5),
+        face_scale=1.0,
+        baselines={"hr_bpm": 70.0},
+    )
+    obs = make_observation(Features(values={"hr_bpm": 82.0}, timestamp=1.0))
+    obs = Observation(obs.frame, obs.landmarks, obs.features, obs.history, profile)
+    clf.assess(obs)
+
+    assert model.seen_x == [[82.0]]
 
 
 def test_missing_features_become_present_flags():

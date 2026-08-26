@@ -44,13 +44,14 @@ def estimate_profile(
     yaw = _percentile(_column(rows, "yaw"), 50.0, 0.0)
     roll = _percentile(_column(rows, "roll"), 50.0, 0.0)
     gaze_x = _percentile(_column(rows, "gaze_x"), 50.0, 0.5)
+    gaze_y = _percentile(_column(rows, "gaze_y"), 50.0, 0.5)
     face_scale = _percentile(_column(rows, "face_scale"), 50.0, 1.0)
 
     return CalibrationProfile(
         ear_open_baseline=ear_open,
         mar_neutral=mar_neutral,
         head_pose_neutral=Pose(pitch=pitch, yaw=yaw, roll=roll),
-        gaze_center=(gaze_x, 0.5),
+        gaze_center=(gaze_x, gaze_y),
         face_scale=face_scale,
         user_id=subject or "default",
     )

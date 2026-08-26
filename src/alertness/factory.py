@@ -298,4 +298,14 @@ def build_calibrator(config: dict[str, Any]):
 
     calib = config.get("calibration", {})
     fps = config.get("camera", {}).get("target_fps", 30)
-    return StatisticalCalibrator(calib.get("duration_seconds", 3.0), fps)
+    # rPPG が有効なら、心拍の安静基準も取れるようキャリブを心拍が出るまで延ばす。
+    # 上限は rppg の窓長に少し余裕を足した値（窓が満ちれば心拍が出る）。
+    rppg = config.get("rppg", {})
+    require: tuple[str, ...] = ()
+    max_seconds = 0.0
+    if rppg.get("enabled", False):
+        require = ("hr_bpm",)
+        max_seconds = float(rppg.get("window_seconds", 20)) + 10.0
+    return StatisticalCalibrator(
+        calib.get("duration_seconds", 3.0), fps, require_keys=require, max_seconds=max_seconds
+    )

@@ -3,8 +3,8 @@
 ルールベースの CueClassifier の隣に置く、差し替え可能なもう一つの判定器。
 cue は使わず、features を「学習時に保存した列順」でベクトル化し、軸ごとの
 モデルで段階を予測する。学習(alertness-colab)が書き出した bundle
-{models, features, classes} をそのまま受け取る。学習と推論で同じ列順・同じ
-軸名になるのが唯一の取り決め。
+{models, features, classes} をそのまま受け取る。モデルはフレーム単位で判定する
+scikit-learn 由来（SVM 等）。学習と推論で同じ列順・同じ軸名になるのが唯一の取り決め。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from ..contracts import Assessment, Dimension, Level, Observation
+from ..contracts import Assessment, Dimension, Features, Level, Observation
 from .states import DimensionSpec, alarm_of, level_for
 
 # 学習のターゲット列 "label_<軸>" と、本体の評価軸名 "<軸>" をつなぐ接頭辞。
@@ -24,17 +24,32 @@ _AXIS_PREFIX = "label_"
 # 実在しない値になるので、値の有無そのものを別の特徴として渡している。
 _PRESENT_SUFFIX = "_present"
 
+# 予測ラベル → Level。4段階に加えて、学習側で束ねた段階（labels.py の束ね方）にも対応する。
+# 語彙は衝突しない（none/high は4段階と3段階で同じ Level、mid は3段階のみ、
+# calm/elevated は2値のみ）ので、1つの表で全スキームを扱える。2値の elevated は
+# 「上がっている」を1段階で表すので、警告が明確に立つ HIGH に写す。
 _LEVEL_BY_NAME = {
     "none": Level.NONE,
     "low": Level.LOW,
     "medium": Level.MEDIUM,
     "high": Level.HIGH,
+    "calm": Level.NONE,  # 2値: 落ち着き
+    "elevated": Level.HIGH,  # 2値: 上昇
+    "mid": Level.MEDIUM,  # 3段階: 中
 }
+
+# ラベル列の軸名に付く、ラベルの作り方を表す接尾辞。同じ評価軸を別の作り方でラベル付け
+# した列（例: EDA から作った label_stress_eda）も、アプリの評価軸（stress）として扱う。
+_SOURCE_SUFFIXES = ("_eda",)
 
 
 def _dimension_name(target: str) -> str:
-    # "label_drowsiness" → "drowsiness"
-    return target[len(_AXIS_PREFIX) :] if target.startswith(_AXIS_PREFIX) else target
+    # "label_stress_eda" → "stress"。接頭辞 label_ とラベル源の接尾辞を外す。
+    name = target[len(_AXIS_PREFIX) :] if target.startswith(_AXIS_PREFIX) else target
+    for suffix in _SOURCE_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
 
 
 def _level_of(name: str) -> Level:
@@ -61,25 +76,35 @@ class MLClassifier:
             raise ValueError("model.pkl に特徴量の列順(features)が入っていません。")
         self._models = dict(models)
         self._features = list(features)
+        # 学習が安静基準で中心化されているか。されているなら推論も同じ中心化を通す。
+        # 学習側(rest_basis)と推論側(profile.baselines)で対称に「安静からの差」にする。
+        self._rest_centered = bool(bundle.get("rest_centered"))
         # 軸の向き（高いほど良い軸か）は config 側の取り決めなので、rule と同じ spec を使う。
         self._specs = {s.name: s for s in (dimensions or ())}
 
     def assess(self, obs: Observation) -> Assessment:
-        # 欠損は 0.0（学習側の fillna(0.0) と揃える）。列順は bundle に従う。
-        vector = [self._value(obs, name) for name in self._features]
+        baselines = obs.profile.baselines if self._rest_centered else {}
+        sample = self._vector(obs.features, baselines)
         dims: dict[str, Dimension] = {}
         for target, model in self._models.items():
             name = _dimension_name(target)
-            level, score = self._predict(model, vector)
+            level, score = self._predict(model, sample)
             dims[name] = self._as_dimension(name, score, level)
         return Assessment(dimensions=dims, timestamp=obs.features.timestamp)
 
-    def _value(self, obs: Observation, name: str) -> float:
+    def _vector(self, features: Features, baselines: Mapping[str, float]) -> list[float]:
+        # 欠損は 0.0（学習側の fillna(0.0) と揃える）。列順は bundle に従う。
+        return [self._value(features, name, baselines) for name in self._features]
+
+    def _value(self, features: Features, name: str, baselines: Mapping[str, float]) -> float:
         if name.endswith(_PRESENT_SUFFIX):
             base = name[: -len(_PRESENT_SUFFIX)]
-            return 0.0 if math.isnan(obs.features.get(base, float("nan"))) else 1.0
-        value = obs.features.get(name, 0.0)
-        return 0.0 if math.isnan(value) else value
+            return 0.0 if math.isnan(features.get(base, float("nan"))) else 1.0
+        value = features.get(name, 0.0)
+        if math.isnan(value):
+            return 0.0
+        # 学習が安静中心化されていれば、その人の安静基準を引いて同じ空間にそろえる。
+        return value - baselines.get(name, 0.0)
 
     def _as_dimension(self, name: str, score: float, level: Level) -> Dimension:
         # 反転する軸（集中など）は、予測した段階ではなく警告の強さから段階を引き直す。
@@ -89,17 +114,17 @@ class MLClassifier:
         alarm = alarm_of(spec, score)
         return Dimension(name, score, level_for(alarm, spec.levels), (), alarm, spec.alert_name)
 
-    def _predict(self, model: Any, vector: Sequence[float]) -> tuple[Level, float]:
-        level = _level_of(str(model.predict([vector])[0]))
-        return level, self._severity(model, vector, level)
+    def _predict(self, model: Any, sample: Sequence) -> tuple[Level, float]:
+        level = _level_of(str(model.predict([sample])[0]))
+        return level, self._severity(model, sample, level)
 
-    def _severity(self, model: Any, vector: Sequence[float], level: Level) -> float:
+    def _severity(self, model: Any, sample: Sequence, level: Level) -> float:
         # 0..1 の重症度。確率が取れれば段階の期待値でならし、無ければ段階そのもの。
         proba = getattr(model, "predict_proba", None)
         classes = getattr(model, "classes_", None)
         if proba is None or classes is None:
             return int(level) / int(Level.HIGH)
-        weights = proba([vector])[0]
+        weights = proba([sample])[0]
         expected = sum(
             int(_level_of(str(c))) * float(w) for c, w in zip(classes, weights, strict=True)
         )
