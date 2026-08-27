@@ -14,13 +14,16 @@ from .eda import (
     subject_scale,
     tonic_windows,
 )
-from .hrv import mean_hr, pnn50, rmssd, rr_intervals_ms, sdnn
-from .peaks import detect_peaks
+from .hrv import mean_hr, plausible_rr, pnn50, rmssd, rr_intervals_ms, sdnn
+from .peaks import bandpass, detect_peaks, peak_times
 from .stress import stage_from_rmssd
 
 __all__ = [
+    "bandpass",
     "detect_peaks",
+    "peak_times",
     "rr_intervals_ms",
+    "plausible_rr",
     "mean_hr",
     "sdnn",
     "rmssd",

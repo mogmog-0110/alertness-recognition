@@ -252,6 +252,25 @@ def draw_record_label(img: np.ndarray, label: str) -> None:
     _text(img, text, origin, font, (0, 0, 255))
 
 
+def draw_expected(img: np.ndarray, levels: dict) -> None:
+    """シナリオ再生で「その時刻に何が起きているはず」を右上に出す。
+
+    判定と並べて置くのが目的なので、判定パネル（左上）とは反対側に、録画ラベルの
+    すぐ下に重ねずに置く。区間の外（未アノテ）なら何も描かない。
+    """
+    if not levels:
+        return
+    s = _scale(img)
+    font = max(0.3, 0.55 * s)
+    y = round(60 * s)
+    for axis, level in sorted(levels.items()):
+        text = f"expected {axis}: {level}"
+        (text_w, _), _ = cv2.getTextSize(text, _FONT, font, 2)
+        origin = (max(0, img.shape[1] - text_w - round(16 * s)), y)
+        _text(img, text, origin, font, (200, 200, 200))
+        y += round(22 * s)
+
+
 def _draw_alert(img: np.ndarray) -> None:
     h, w = img.shape[:2]
     s = _scale(img)

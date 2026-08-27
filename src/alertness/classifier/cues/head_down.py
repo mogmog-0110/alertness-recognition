@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
-from ._support import true_fraction, window_values
+from ._support import time_fraction, window_values
 
 
 class HeadDownCue:
@@ -23,12 +23,12 @@ class HeadDownCue:
         if not obs.features.face_present:
             return CueResult(self.name, self.dimension, 0.0, False, "顔なし")
 
-        _, pitches = window_values(obs, "pitch_rel", self.sustained_seconds, 0.0)
+        times, pitches = window_values(obs, "pitch_rel", self.sustained_seconds, 0.0)
         if not pitches:
             return CueResult(self.name, self.dimension, 0.0, False, "")
 
         latest = pitches[-1]
-        sustained = true_fraction([p > self.pitch_down_deg for p in pitches])
+        sustained = time_fraction(times, [p > self.pitch_down_deg for p in pitches])
         score = clamp(latest / self.pitch_down_deg) * sustained if self.pitch_down_deg > 0 else 0.0
         active = sustained >= 0.7 and latest > self.pitch_down_deg
         return CueResult(self.name, self.dimension, score, active, f"下向き {latest:.0f}°")

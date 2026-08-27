@@ -17,8 +17,27 @@ camera:
                               # カメラで処理25msなら58ms=17fpsに落ちる。false で従来動作。
 
 source:
-  type: webcam          # webcam / video
+  type: webcam          # webcam / video / iphone / mjpeg
   # path: sample.mp4    # type=video のとき使う
+  # type: iphone        # iPhone アプリ（alertness-ios）を映像入力と警告出力にする。
+  #                     # PC がサーバ、端末がクライアント。端末の入力欄に
+  #                     # ws://<PCのIPアドレス>:8765 を入れる（ipconfig の IPv4 アドレス。
+  #                     # 同じ Wi-Fi にいること）。Windows のファイアウォールで 8765 の
+  #                     # 受信を許可しておく。ここで詰まると「繋がらない」という症状に
+  #                     # なるが原因が見えにくい。
+  #                     # mjpeg と違い、撮影時刻を端末が付けて送るので rPPG も使える。
+  # iphone:
+  #   host: 0.0.0.0     # 全インタフェースで待つ。特定の NIC に絞るなら IP を書く
+  #   port: 8765
+  # type: mjpeg         # スマートフォンをカメラにする。PC は手元の開発機のまま、
+  # url: http://192.168.1.10:8080/video   # 車に載せるのは端末だけになる。
+  #                     # Android の「IP Webcam」等の既製アプリがこの形式を出すので、
+  #                     # アプリを自作せずに試せる。無線は車内で不安定なので、USB
+  #                     # テザリング経由の有線接続が堅い。
+  #                     # 注意: フレームの時刻は受信側で入れるため、通信の揺らぎが
+  #                     # そのまま時刻の揺らぎになる。眠気・注意逸脱は耐えるが、
+  #                     # rPPG（心拍・呼吸）は精度が落ちる。生体指標まで要るなら、
+  #                     # 撮影時刻を添えて送るアプリを自作すること。
 
 detector:
   type: mediapipe       # MediaPipe FaceLandmarker (Tasks API)
@@ -41,13 +60,19 @@ normalize:
 
 # 何を判定するか（評価軸）。軸を増やせば判定対象がそのまま増える。
 # 各軸は連続スコア(0..1)を持ち、levels でレベルに区切る。
+# 段を下げるには levels の境界を release_margin ぶん下回る必要がある（既定 0.08）。
+# 上げは境界そのままなので、危険側は待たせずに立ち、境界に張り付いた入力でも
+# 段が往復して警告音が鳴り止み鳴り直すことがない。
 # alert_on は軸の向き。既定の high はスコアが高いほど警告、low は低いほど警告（集中など、
 # 高いほど良い軸）。スコア自体の意味は変えないので、記録・学習はそのまま使える。
 assessment:
   dimensions:
     - name: drowsiness        # 眠気
+      # 遅い順に並べると eye_closure(30秒平均) → blink_dynamics/nodding(早期兆候) →
+      # blink(マイクロスリープ＝もう手遅れ)。早期兆候の2本があるので、PERCLOS が
+      # 動くのを待たずに段が上がる。face_absent は他が全部黙る「見失い」を受け持つ。
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: [eye_closure, blink, yawn, head_down]
+      cues: [eye_closure, blink, blink_dynamics, nodding, yawn, head_down, face_absent]
     - name: distraction       # 注意逸脱
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [head_turn, gaze_off]
@@ -61,10 +86,14 @@ assessment:
       alert_name: inattentive
     - name: stress            # ストレス・苛立ち（心拍と表情の一致で rule 判定。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: [hr_elevation, facial_tension]
-      # 心拍も表情も単独では特異度が低い（心拍は体動でも上がり、表情は照明や集中でも動く）。
-      # weighted にして両者の一致を要求する。max だと片方だけで警告まで届いてしまう。
+      cues: [hr_elevation, facial_tension, respiration, blink_rate]
+      # どの指標も単独では特異度が低い（心拍は体動でも上がり、表情は照明や集中でも動き、
+      # 呼吸は会話でも上がり、瞬きは乾燥でも増える）。weighted にして一致を要求する。
+      # max だと片方だけで警告まで届いてしまう。
       combine: weighted
+      # 何本が「兆候あり」と言えば満額の警告にするか。足りなければその割合まで割り引く。
+      # 分母は計測できている cue だけなので、rPPG が拾えない環境でも残る指標で判定できる。
+      min_agree: 2
 
 # 特徴ごとの判定器（cue）。重みと個別パラメータを持つ。
 # パラメータ名は各 cue クラスの引数と一致させること。
@@ -73,21 +102,63 @@ cues:
   # gaze は実測が 0.0〜0.06 程度だったので 0.05、頭部閾値も実測に寄せた）。
   eye_closure: { weight: 1.0, window_seconds: 30, perclos_drowsy: 0.4, closed_ratio: 0.6, max_yaw: 25 }
   blink:       { weight: 0.7, closed_ratio: 0.6, long_blink_seconds: 1.0, max_yaw: 25 }
+  # 瞬きの遅さ。PERCLOS（遅い）とマイクロスリープ（手遅れ）の間を埋める早期兆候。
+  # 覚醒時の閉眼は 0.1〜0.15 秒、眠気が進むと 0.3 秒以上に伸び、まぶたの戻りも遅くなる。
+  # normal/drowsy の各値は文献の代表値を初期値に置いたもので、収録データで詰めること。
+  blink_dynamics: { weight: 0.8, window_seconds: 60, closed_ratio: 0.6, open_ratio: 0.7, normal_seconds: 0.15, drowsy_seconds: 0.35, normal_reopen: 0.12, drowsy_reopen: 0.30, min_blinks: 3 }
+  # うなずき（落ちて戻す往復）。head_down は持続を条件にするのでこの動きを拾えない。
+  nodding:     { weight: 0.8, window_seconds: 60, amplitude_deg: 8, max_seconds: 2.5, nods_drowsy: 3 }
+  # 運転者を見失っている状態。他の cue は顔なしで黙るので、この1本だけが声を出せる。
+  face_absent: { weight: 1.0, absent_seconds: 3.0, grace_seconds: 0.5 }
   yawn:        { weight: 0.5, open_threshold: 0.4, min_seconds: 1.5 }
   head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5 }
   head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5 }
+  # 視線に関わる3つのしきい値（off_threshold / center_radius / _zones.forward_gaze）は、
+  # gaze_x が左右の動きに反応しなかった頃に置いた値なので、根拠が無い。当時は視線ズレが
+  # 常に 0 で、どのしきい値を置いても結果は同じだった。録り直して較正すること。
   gaze_off:    { weight: 0.6, off_threshold: 0.035, off_screen_seconds: 2.0 }
   # 集中(走査): 視線が中心域に留まった割合(PRC)と水平視線のばらつき。留まりすぎ＝走査不足で
   # 下がる。視線を1点に固定するのは集中ではなく、認知負荷による視野狭窄の兆候。
   # prc_healthy は文献の 92% をそのまま使えない（アイトラッカー前提で尺度が違う）ため、
-  # 自前のデータで較正すること。手元の収録では中心半径 0.035 で PRC 99% だった。
+  # 自前のデータで較正すること。
   gaze_scanning: { weight: 1.0, window_seconds: 30, center_radius: 0.035, prc_healthy: 0.85, prc_frozen: 1.0, min_spread: 0.004, min_window: 10 }
   # 集中: AttenD 方式の注意バッファ。対象を見ている間は残高が満ち、外れている間は減る。
   # capacity_seconds=2 は「前方から2秒視線を外すと車線内の位置把握が崩れる」という根拠から。
   # on_target_yaw_deg は広めにしてある。yaw_rel は起動時3秒のキャリブが基準なので、そのとき
   # 顔が少し傾いていると以降ずっと十数度ずれる。主たる判定は視線(gaze_on_threshold)に置き、
   # 頭部は「明らかに横を向いた」を弾く役に留める。ずれを感じたら 'c' で再キャリブできる。
-  attention_buffer: { weight: 1.0, capacity_seconds: 2.0, latency_seconds: 0.1, gaze_on_threshold: 0.035, on_target_yaw_deg: 25, refill_rate: 1.0 }
+  # 外した先はゾーンで区別する（zones.enabled: true のとき）。ミラー・メーターの確認は
+  # 安全確認そのものなので、減り始めるまでの猶予を長めにとる。区別しないと、確認を
+  # 怠る運転者ほど高得点になるという逆転が起きる。猶予はミラー確認の実際の長さ
+  # （0.6〜1.0秒）より短くしてある。全部を無罰にすると、短い確認を繰り返して前方を
+  # ほとんど見ない運転（視覚的時分割）を素通りさせてしまう。
+  # zones は既定で無効。ミラーとメーターの角度は車種・シート位置・取り付けで変わり、
+  # 測らずに既定値を当てると「脇見をミラー確認と読む」ことになって区別しないより危険。
+  # 実車で角度を測ってから enabled: true にすること。
+  attention_buffer:
+    weight: 1.0
+    capacity_seconds: 2.0
+    latency_seconds: 0.1        # ゾーン無効時、および away ゾーンの猶予
+    gaze_on_threshold: 0.035
+    on_target_yaw_deg: 25
+    refill_rate: 1.0
+    # 前方の向きを走行中の分布の最頻値から推定する。起動時キャリブは、カメラを注視
+    # すべき方向からずらして付けると以降ずっとその角度ぶんずれる。運転者は時間の大半を
+    # 前方に向けているので、分布の最頻値が前方になる。中央値ではなく最頻値を使うのは、
+    # 片側のミラーをよく見る癖があると中央値がそちらへ引かれるため。
+    # 確定するまで（既定 60 標本 × 0.5 秒間隔 ≒ 30 秒）は補正せず、従来どおり動く。
+    auto_forward: false         # 実車で取り付けが決まったら true にする
+    forward_seconds: 180
+    forward_min_samples: 60
+    zones:
+      enabled: false            # true にすると mirror / instrument を区別する
+      # forward_pitch: 10       # これ以内の縦の傾きなら前方（視線は水平しか取れないため）
+      # mirror_yaw: 35          # ここまでの横向きはミラー確認
+      # instrument_pitch: 10    # これ以上の下向きはメーター
+      # instrument_pitch_max: 22  # これを超える下向きは膝元＝脇見。上限が無いと最も
+      #                           # 危険な脇見が最も安全なゾーンに化ける
+      # instrument_yaw: 15
+    # zone_latency: { mirror: 0.5, instrument: 0.4, away: 0.1 }
   # ストレス(表情): 眉を寄せ(AU4)・まぶたを緊張させ(AU7)・唇を押しつける(AU24)動きの強さ。
   # 皺眉筋の活動は負の感情価と認知的努力の指標として長く検証されてきた。個人差が大きく
   # 向きも一様でないので、本人の安静との差だけを見て、単独では警告を立てない。
@@ -105,6 +176,14 @@ cues:
   # （require_calibration。baseline_seconds の6割＝既定 72 秒）。頭が max_motion_deg より振れている間は rPPG が当てにならないので
   # 判定を止め、直前の値を hold_seconds だけ保つ。
   hr_elevation: { weight: 1.0, span_bpm: 10, min_quality: 0.6, noise_k: 6.0, sustained_seconds: 5.0, baseline_bpm: 70, adaptive_baseline: true, baseline_seconds: 120, freeze_at: 0.3, require_calibration: true, max_motion_deg: 6.0, hold_seconds: 10.0, min_rest_samples: 30, rest_interval: 1.0 }
+  # ストレス(呼吸): 交感神経の亢進を心拍とは別の経路で見る。胸郭の動きは顔全体を周期的に
+  # 動かすので、脈という小さな成分より信号が大きく、照明と体動に強い。安静時 12〜20 回/分と
+  # 個人差が大きいので本人の基準との差で見る。span_rpm は暫定値で、収録データで詰めること。
+  respiration: { weight: 0.8, span_rpm: 4.0, min_quality: 0.4, sustained_seconds: 15, baseline_seconds: 180, min_rest_samples: 20, rest_interval: 2.0 }
+  # ストレス(瞬き頻度): 緊張・認知負荷で増える。眠気側の blink_dynamics が「1回の長さ」を
+  # 見るのに対し、こちらは「回数」。長い閉眼は瞬きではなく眠気なので max_blink_seconds で
+  # 除く（混ぜると、眠くなるほどストレスが上がって見える）。
+  blink_rate: { weight: 0.6, window_seconds: 60, span_rate: 8.0, max_blink_seconds: 0.5, baseline_seconds: 180, min_rest_samples: 20, rest_interval: 5.0 }
 
 # カメラからの心拍推定（rPPG）。stress の特徴源。numpy だけの軽い処理なので既定で有効。
 # 起動後 数秒ぶん貯まると各フレームに hr_bpm / rppg_quality が乗る。stress を使わない用途では
@@ -117,17 +196,30 @@ rppg:
   # HRV(RMSSD) は拍の時刻の精度で決まる。フレーム間隔のままだと 30fps で下限 22ms、
   # 60fps でも 11ms あり、人の安静時 RMSSD（20〜50ms）を測るには足りない。帯域制限補間で
   # 標本の間を埋めると 30fps で 3ms、60fps で 2ms まで下がる（合成波での実測）。
-  # 拍検出は帯域通過と局所正規化を通すので、雑音や体動が乗った脈波でも拍位置を保てる。
+  # 拍検出は 帯域を絞る → しきい値を局所化する → 時間順に不応期を効かせる、の3段で、
+  # 雑音や体動が乗った脈波でも拍位置を保てる。合成波（真値 40ms）での実測は 37ms 前後、
+  # 真値 15ms なら 14ms、60ms なら 57ms と、変動の大小も追える。
   # それでも崩れた窓は生理的にありえない値になるため、出力側で弾く（拍間隔と同じ桁まで
   # 跳ねた RMSSD は捨てる）。良質な窓でだけ値が入るので、欠けるのが普通の列になる。
   hrv_enabled: true
   hrv_upsample: 16            # 拍位置を求める前に標本を何倍に補間するか
   hrv_min_quality: 0.5        # 有効にした場合、この品質を超えた安定窓のときだけ出す
+  # 呼吸数。脈波の低周波成分（胸郭の動きによる基線の変動）から取る。追加ハード不要。
+  # 心拍より長い窓が要る（30回/分でも2秒に1周期）ので、心拍とは別のバッファで持つ。
+  # 心拍用の窓を伸ばして共用すると、心拍の側が変動とドリフトを拾って品質が落ちる。
+  resp_enabled: true
+  resp_window_seconds: 30
+  resp_min_rpm: 6
+  resp_max_rpm: 30
 
 # cue の結果を統合して最終判定を出す方針
 policy:
   type: rule_based            # ml にすると学習済みモデルで判定（要 pip install .[ml]）
-  hysteresis_frames: 8        # 状態のちらつき防止（rule_based のみ）
+  # 平滑化は非対称。安全側の装置なので、上がるときは速く（危険を待たせない）、下がるときは
+  # 遅く（一瞬の回復で警告を解かない）。同じ係数で上下させると、警告を早くするほど解除も
+  # 早くなり、境界付近で鳴り止み鳴り直す動きになる。
+  attack_frames: 2            # 警告が立ち上がるときの EMA 窓（小さいほど即応）
+  release_frames: 20          # 警告が下がるときの EMA 窓（大きいほど粘る）
   # type: ml                  # alertness-colab が作った model.pkl を読む判定に切替
   # model_path: models/model.pkl
 
@@ -136,6 +228,11 @@ feedback:
   window_width: 0             # 表示の幅。0 なら撮影したままの大きさ。撮影解像度とは切り離して
                               # あるので、撮影を軽くしたまま表示だけ大きくすることもできる。
                               # ウィンドウは手でもドラッグして大きさを変えられる。
+  # 運転者向けの別窓。実車では運転者はモニタを見ない（見ること自体が脇見になる）ので、
+  # 特徴量やタイムラインは観客向けの窓に置き、運転者向けは警告だけにする。
+  # 警告が無い間は黒のまま（夜間に明るい画面を正面に置くのは、それ自体が危険）。
+  driver_view: false
+  driver_window_width: 0      # 0 なら window_width と同じ
   draw_landmarks: true
   face_mesh: false            # true にすると顔全体のメッシュ（網目）を描く
   stress_meter: true          # 右上にストレスの安静基準キャリブの進行度バーを表示。
@@ -143,10 +240,33 @@ feedback:
   timeline: stress            # 左下に推移の帯を出す軸名。空なら出さない
   timeline_seconds: 300       # 帯に収める時間（秒）
   debug: true                 # 画面右下に全特徴量を数値表示。しきい値調整時に使う
+  # 判定が流れなくなったことを知らせるまでの時間。この装置の最悪の壊れ方は警告のしすぎ
+  # ではなく黙ること。カメラが外れても画面には最後の判定が残り、正常との区別がつかない。
+  stall_seconds: 3.0
+  stall_repeat_seconds: 5.0   # 止まったままのとき、知らせ直す間隔
   profile: false              # true にすると段ごとの所要時間(ms)も出す。fps が出ない
                               # ときの切り分け用（cam=取り込み待ち/detect/judge/draw）
-  alert_cooldown_seconds: 5.0
+  # 警告音は段階で鳴り方を変える。運転者は画面を見られないので、切迫の度合いは音だけで
+  # 伝わる必要がある。MEDIUM は先頭の一音を小さく鳴らして一定間隔（急かさない）、
+  # HIGH はパターン全体を鳴らし、続く間は鳴らすたびに間隔を詰める（無視され続けたときに
+  # 同じ間隔のままだと気づかれずに終わる）。詰めっぱなしは装置ごと切られるので下限を置く。
+  alert_cooldown_seconds: 5.0       # MEDIUM の間隔。HIGH はこの半分から始まる
+  alert_min_interval_seconds: 1.5   # どれだけ詰めてもこれより短くしない
+  alert_escalate_factor: 0.7        # HIGH が続く間、鳴らすたびに間隔にかける係数
   audio: true                 # やわらかいチャイムで警告（Windows）
+  # source.type: iphone のとき、判定結果を端末へ返して端末側で警告する。運転者の手元に
+  # あるのは端末なので、実車ではここが警告の出口になる。
+  iphone: true
+  iphone_features: []         # 端末に送る特徴量。開発中の切り分け用で、無くても動く。
+                              # 例: [ear, mar, pitch, yaw]
+  # 端末に出す軸の表示名。OpenCV の窓は日本語を描けないので軸名は英語のままにしてあるが、
+  # 端末の画面は日本語で出せる。ここに無い軸は軸名がそのまま出る。
+  # 見出しは画面に出る名前（alert_name があればそちら）。
+  iphone_names:
+    drowsiness: 眠気
+    distraction: 脇見
+    inattentive: 注意散漫
+    stress: 緊張
   sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted）
     drowsiness: drowsy
     distraction: distracted

@@ -12,10 +12,11 @@ import argparse
 from pathlib import Path
 
 from .config import load_config
+from .evaluation.event_runner import format_axis_events
 from .evaluation.metrics import format_scorecard, scorecard
 from .evaluation.paths import resolve_csv_paths
 from .evaluation.replay import replay_predict
-from .evaluation.runner import evaluate_files
+from .evaluation.runner import dimension_names_from_header, evaluate_files
 from .evaluation.stats import DEFAULT_COLUMNS, feature_stats, format_stats
 
 _LEVELS = {"none": 0, "low": 1, "medium": 2, "high": 3}
@@ -31,6 +32,14 @@ def _scorecard_text(paths: list[str], min_level: int, awake: str, config_path: s
     return format_scorecard(scorecard(y_true, y_pred, labels, awake))
 
 
+def _axes(paths: list[str]) -> list[str]:
+    """CSV のヘッダから評価軸名を拾う。軸を増やしても採点側は無修正で追随する。"""
+    import csv
+
+    with open(paths[0], newline="", encoding="utf-8") as f:
+        return dimension_names_from_header(csv.DictReader(f).fieldnames)
+
+
 def _build_report(paths: list[str], min_level: int, awake: str, config_path: str | None) -> str:
     header = "=== 採点（再判定: 現設定）===" if config_path else "=== 採点（録画時の判定）==="
     return "\n".join(
@@ -42,6 +51,11 @@ def _build_report(paths: list[str], min_level: int, awake: str, config_path: str
             "",
             header,
             _scorecard_text(paths, min_level, awake, config_path),
+            "",
+            # 車載で効くのはこちら。フレーム単位の accuracy は収録の大半を占める平常区間に
+            # 支配され、「何秒で気づけたか」も「1時間に何回よけいに鳴ったか」も表さない。
+            "=== イベント単位（検出遅延と誤警告） ===",
+            format_axis_events(paths, _axes(paths), min_level),
         ]
     )
 

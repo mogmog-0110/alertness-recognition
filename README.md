@@ -45,6 +45,30 @@ scripts\run.bat --record                   :: 判定の裏で特徴量CSVを run
 
 しきい値やキャリブの有無などの設定は `config\default.yaml`。`--config` で別ファイルも渡せる。
 
+## iPhone をカメラと警告の出口にする
+
+PC は開発機のまま手元に置き、車に載せるのは端末だけ、という構成。端末が撮った映像を
+WebSocket で受け、判定結果を同じ接続で返す。端末側は別リポジトリ（`alertness-ios`）。
+
+1. `pip install -e .[iphone]`（`websockets` が要る）
+2. `config\default.yaml` の `source.type` を `iphone` にする（既定ポート 8765）
+3. Windows のファイアウォールで 8765 の受信を許可する。ここで詰まると
+   「端末が繋がらない」という症状になるが、原因が見えにくい
+4. `scripts\run.bat` を起動してから、端末に `ws://<PCのIPアドレス>:8765` を入れる
+   （`ipconfig` の IPv4 アドレス。同じ Wi-Fi にいること）
+
+端末が手元に無くても、経路だけなら確かめられる。
+
+```bat
+python examples\iphone_fake_device.py --video clip.mp4
+```
+
+映像を送って返ってきた判定を表示する。`--url` で接続先を変えられる。
+
+MJPEG（`source.type: mjpeg`）でも既製のカメラアプリを使えるが、そちらは撮影時刻を
+受信側で入れるので、通信の揺らぎがそのまま生理指標の歪みになる。心拍・呼吸まで使うなら
+撮影時刻を添えて送る iPhone 経路を使う。
+
 ## 画面を録画する
 
 デモの様子を動画で残したいときは `record.bat`。画面を録画しながらデモを起動し、

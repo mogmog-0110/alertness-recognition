@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..contracts import Assessment, Observation
-from ..ports import Cue, DecisionPolicy
+from ..ports import Cue, DecisionPolicy, Resettable
 
 
 class CueClassifier:
@@ -21,3 +21,13 @@ class CueClassifier:
     def assess(self, obs: Observation) -> Assessment:
         results = tuple(c.evaluate(obs) for c in self._cues)
         return self._policy.decide(obs, results)
+
+    def reset(self) -> None:
+        """状態を持つ cue と policy をまとめて初期化する。
+
+        再キャリブレーションは「別人になったかもしれない」の合図なので、本人の安静を
+        前提に育てた基準（心拍・表情）と、積み上げた注意残高・平滑値をここで捨てる。
+        """
+        for part in (*self._cues, self._policy):
+            if isinstance(part, Resettable):
+                part.reset()

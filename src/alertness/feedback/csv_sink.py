@@ -43,12 +43,14 @@ _NORMALIZED_COLUMNS = (
     "pitch_rel",
     "yaw_rel",
     "gaze_off",
+    "gaze_dx",  # 向き付きの視線ズレ。左右のどちらを見たかは gaze_off では分からない
     "gaze_off_y",
     "normalize_version",
 )
 
-# rPPG 由来。良質な窓でだけ入る（機会的）ので欠けるのが普通。
-_RPPG_COLUMNS = ("hr_bpm", "rppg_quality", "hrv_rmssd")
+# rPPG 由来。良質な窓でだけ入る（機会的）ので欠けるのが普通。呼吸は心拍とは別の
+# 30秒窓を持つので、心拍が入っている行でも埋まるとは限らない。
+_RPPG_COLUMNS = ("hr_bpm", "rppg_quality", "hrv_rmssd", "resp_rpm", "resp_quality")
 
 # 記録する特徴量の列（生 + 正規化 + blendshape + rPPG）。順序と名前が学習との取り決め。
 FEATURE_COLUMNS = (
@@ -110,7 +112,7 @@ class CsvRecorderSink:
         row["subject"] = self._subject
         row["label"] = self._labels.value
         # 軸別ラベルは、対応する provider だけが持つ（levels に無い軸は空＝未アノテ）。
-        levels = getattr(self._labels, "levels", {})
+        levels = self._labels.levels
         for column in self._label_columns:
             axis = column[len("label_") :]
             row[column] = levels.get(axis, "")

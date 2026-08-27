@@ -19,7 +19,7 @@ import math
 
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
-from ._support import window_values
+from ._support import time_fraction, window_coverage, window_values
 
 
 class GazeScanningCue:
@@ -34,6 +34,7 @@ class GazeScanningCue:
         prc_frozen: float = 1.0,
         min_spread: float = 0.004,
         min_window: float = 10.0,
+        min_coverage: float = 0.5,
     ) -> None:
         self.window_seconds = window_seconds  # 走査を見る窓
         self.center_radius = center_radius  # 中心域とみなす視線ズレの半径
@@ -44,10 +45,18 @@ class GazeScanningCue:
         self.prc_frozen = prc_frozen  # ここまで来ると 0 点（完全に貼りついている）
         self.min_spread = min_spread  # 水平視線のばらつきがこれ未満なら走査していない
         self.min_window = min_window  # これだけ履歴が無いと判定しない
+        self.min_coverage = min_coverage  # 窓のうち顔が見えていた時間がこれ未満なら判定しない
 
     def evaluate(self, obs: Observation) -> CueResult:
         if not obs.features.face_present:
             return CueResult(self.name, self.dimension, 1.0, False, "顔なし", None, False)
+
+        coverage = window_coverage(obs, self.window_seconds)
+        if coverage < self.min_coverage:
+            # 顔が飛び飛びにしか取れていない窓では、残ったフレームが走査の有無ではなく
+            # 検出できた瞬間の偏りを表す。
+            detail = f"計測不足 {coverage:.0%}"
+            return CueResult(self.name, self.dimension, 1.0, False, detail, None, False)
 
         times, raw = window_values(obs, "gaze_off", self.window_seconds, float("nan"))
         pairs = [(t, v) for t, v in zip(times, raw, strict=False) if not math.isnan(v)]
@@ -58,7 +67,7 @@ class GazeScanningCue:
             return CueResult(self.name, self.dimension, 1.0, False, "走査を観察中", None, False)
 
         values = [v for _, v in pairs]
-        prc = sum(1 for v in values if v <= self.center_radius) / len(values)
+        prc = time_fraction([t for t, _ in pairs], [v <= self.center_radius for v in values])
         spread = _stdev(values)
         score = min(self._prc_score(prc), self._spread_score(spread))
         detail = f"PRC {prc:.0%} 視線ばらつき {spread:.4f}"

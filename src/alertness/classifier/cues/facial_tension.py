@@ -55,6 +55,10 @@ class FacialTensionCue:
             noise_k=noise_k,
         )
 
+    def reset(self) -> None:
+        """安静基準を捨てる。表情の基準は個人差が大きく、他人には使えない。"""
+        self._baseline.reset()
+
     def evaluate(self, obs: Observation) -> CueResult:
         progress = self._baseline.progress()
         if not obs.features.face_present:
