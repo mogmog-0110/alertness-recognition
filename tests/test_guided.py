@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alertness.guided import GuidedSession, Prompt
+from alertness.guided import PROTOCOLS, GuidedSession, Prompt
 
 
 def _session():
@@ -42,3 +42,23 @@ def test_finishes_after_total():
     step = s.step(100.0)  # 合計 24 秒を超える
     assert step.phase == "done"
     assert step.progress == 1.0
+
+
+def test_the_long_protocol_outlasts_every_cue_window():
+    """1 状態の保持が、窓を使う cue の窓より長いこと。
+
+    acted は 1 状態 12 秒だが eye_closure は 30 秒、blink_dynamics は 60 秒の窓で
+    判定する。短い保持を並べると、どの時点の窓も複数のラベルを含んでしまい、
+    これらの cue は原理的にラベルを分離できない。較正用の収録では、窓が単一
+    ラベルで満たされる長さが要る。
+    """
+    longest_window_seconds = 60.0  # blink_dynamics
+    for prompt in PROTOCOLS["acted_long"]:
+        assert prompt.hold_seconds > longest_window_seconds, prompt.label
+
+
+def test_the_long_protocol_covers_the_same_states():
+    # 較正のためだけに状態を減らさない。短い版と同じラベルを揃える。
+    assert [p.label for p in PROTOCOLS["acted_long"]] == [
+        p.label for p in PROTOCOLS["acted"]
+    ]
