@@ -141,4 +141,7 @@ class CalibrationAware(Protocol):
     実装は任意。この口を持たない sink には呼ばれない。
     """
 
-    def calibrating(self, obs: Observation, progress: float) -> None: ...
+    def calibrating(
+        self, obs: Observation, progress: float,
+        waiting_for: str = "", expected_seconds: float = 0.0,
+    ) -> None: ...
