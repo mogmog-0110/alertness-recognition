@@ -39,6 +39,7 @@ class IPhoneSink:
         level = assessment.alert_level()
         payload: dict = {
             "timestamp": assessment.timestamp,
+            "phase": "running",
             "level": _LEVEL_NAME.get(level, "none"),
             "alert": level >= self._alert_from,
         }
@@ -52,6 +53,19 @@ class IPhoneSink:
         if self._features:
             payload["features"] = self._selected(obs)
         self._link.send(payload)
+
+    def calibrating(self, obs: Observation, progress: float) -> None:
+        # 端末はこれを見て「正面を見てください」と進捗を出し、警告を鳴らさない。
+        # 基準が無いままの判定で鳴らしても意味が無い。
+        self._link.send(
+            {
+                "timestamp": obs.features.timestamp,
+                "phase": "calibrating",
+                "progress": max(0.0, min(1.0, float(progress))),
+                "message": "基準を測っています",
+                "alert": False,
+            }
+        )
 
     def _selected(self, obs: Observation) -> dict[str, float]:
         # NaN は JSON では表せない（json は NaN を吐くが受け側の JSONDecoder が拒む）。

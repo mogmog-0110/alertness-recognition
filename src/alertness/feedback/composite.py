@@ -16,6 +16,13 @@ class CompositeSink:
         for sink in self._sinks:
             sink.emit(obs, assessment)
 
+    def calibrating(self, obs: Observation, progress: float) -> None:
+        # 実装は任意なので、持っている sink にだけ渡す。
+        for sink in self._sinks:
+            notify = getattr(sink, "calibrating", None)
+            if callable(notify):
+                notify(obs, progress)
+
     def close(self) -> None:
         for sink in self._sinks:
             sink.close()
