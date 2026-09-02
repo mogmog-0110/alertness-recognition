@@ -5,6 +5,15 @@
 
 ## 起動（PC 側）
 
+Windows:
+
+```bat
+scripts\setup.bat     :: 初回だけ。venv と依存を入れる
+scripts\demo.bat
+```
+
+その他:
+
 ```bash
 python -m alertness.demo
 ```
