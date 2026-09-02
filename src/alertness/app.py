@@ -235,6 +235,10 @@ class App:
 
     def _calibrate(self, obs: Any) -> None:
         self._calibrator.collect(obs)
+        # 手元に窓が無い構成 (端末が離れている) でも進捗が伝わるようにする。
+        notify = getattr(self._sinks, "calibrating", None)
+        if callable(notify):
+            notify(obs, self._calibrator.progress)
         if self._gui:
             from .feedback import display, overlay
 

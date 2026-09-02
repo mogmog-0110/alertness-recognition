@@ -114,3 +114,18 @@ class FeedbackSink(Protocol):
     def emit(self, obs: Observation, assessment: Assessment) -> None: ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class CalibrationAware(Protocol):
+    """キャリブ中の進み具合も受け取れる出力先。
+
+    emit は判定が出てから呼ばれるので、キャリブ中は何も届かない。手元に画面のある
+    PC なら窓へ進捗を描けばよいが、端末が離れた場所にある構成では「いま基準を
+    測っている」ことが利用者に伝わらない。伝わらないと正面から目を離してしまい、
+    基準そのものが狂う。
+
+    実装は任意。この口を持たない sink には呼ばれない。
+    """
+
+    def calibrating(self, obs: Observation, progress: float) -> None: ...

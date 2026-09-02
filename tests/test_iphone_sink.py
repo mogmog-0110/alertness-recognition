@@ -123,3 +123,41 @@ def test_an_unmapped_axis_keeps_its_own_name():
     sink = IPhoneSink(link, names={"drowsiness": "眠気"})
     payload = _emit(sink, _assessment(Dimension("fatigue", 0.95, Level.HIGH)))
     assert payload["dimension"] == "fatigue"
+
+
+def test_calibration_progress_reaches_the_device() -> None:
+    # キャリブ中は emit が呼ばれないので、この口が無いと端末は何も知らされない。
+    link = _FakeLink()
+    sink = IPhoneSink(link)
+    obs = make_observation(Features(values={}, timestamp=3.5))
+
+    sink.calibrating(obs, 0.25)
+
+    (payload,) = link.sent
+    assert payload["phase"] == "calibrating"
+    assert payload["progress"] == 0.25
+    assert payload["timestamp"] == 3.5
+    # 基準が無いままの判定で鳴らしても意味が無いので、必ず落としておく。
+    assert payload["alert"] is False
+
+
+def test_calibration_progress_is_clamped() -> None:
+    # collect の実装によっては 1.0 を少し超えることがある。端末の進捗バーが
+    # 振り切れないよう、送る側で丸める。
+    link = _FakeLink()
+    sink = IPhoneSink(link)
+    obs = make_observation(Features(values={}, timestamp=0.0))
+
+    sink.calibrating(obs, 1.4)
+    sink.calibrating(obs, -0.2)
+
+    assert [p["progress"] for p in link.sent] == [1.0, 0.0]
+
+
+def test_running_phase_is_stated_explicitly() -> None:
+    # 端末は phase 省略を running とみなすが、明示しておくと受け側の分岐が
+    # 「省略された」のか「running だった」のか迷わずに済む。
+    link = _FakeLink()
+    sink = IPhoneSink(link)
+    payload = _emit(sink, _assessment(Dimension(name="眠気", score=0.1, level=Level.NONE)))
+    assert payload["phase"] == "running"
