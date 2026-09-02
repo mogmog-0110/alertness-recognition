@@ -219,6 +219,13 @@ class App:
         self._maybe_cue(step)
         assessment = self._pipeline.classify(obs)
         self._sinks.emit(obs, assessment)  # CSVへ記録（表示は下で行う）
+        # 端末を車載位置に置いた運転者は PC の窓を見られないので、指示も送る。
+        guiding = getattr(self._sinks, "guiding", None)
+        if callable(guiding):
+            guiding(
+                obs, step.title, step.instruction,
+                step.phase, step.remaining, step.progress,
+            )
         if self._gui:
             from .feedback import display, overlay
 

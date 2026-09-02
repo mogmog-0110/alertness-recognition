@@ -54,6 +54,30 @@ class IPhoneSink:
             payload["features"] = self._selected(obs)
         self._link.send(payload)
 
+    def guiding(
+        self, obs: Observation, title: str, instruction: str,
+        phase: str, remaining: float, progress: float,
+    ) -> None:
+        """収録の指示を端末へ送る。運転者は PC の窓を見られない。
+
+        ready は「次はこれをやる」の予告、hold が実際の記録区間。端末側は
+        残り秒数と全体の進捗を出す。
+        """
+        self._link.send(
+            {
+                "timestamp": obs.features.timestamp,
+                "phase": "guided",
+                "guided": {
+                    "title": title,
+                    "instruction": instruction,
+                    "step": phase,
+                    "remaining": round(float(remaining), 1),
+                    "progress": max(0.0, min(1.0, float(progress))),
+                },
+                "alert": False,
+            }
+        )
+
     def calibrating(self, obs: Observation, progress: float) -> None:
         # 端末はこれを見て「正面を見てください」と進捗を出し、警告を鳴らさない。
         # 基準が無いままの判定で鳴らしても意味が無い。
