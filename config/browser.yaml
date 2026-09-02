@@ -1,3 +1,11 @@
+# ブラウザ版で使うときの設定。default.yaml との違いは source と feedback だけ。
+#
+#   python scripts/make_cert.py --host <このPCのIP>
+#   python -m alertness --config config/browser.yaml
+#
+# 端末のブラウザで https://<このPCのIP>:8765/ を開く。
+# 証明書の警告は「詳細を表示」→「このWebサイトを閲覧」で 1 回だけ承認する。
+
 # 既定設定。しきい値・窓幅・カメラ設定はここで一元管理し、コードには直書きしない。
 # 用途を変える場合も、基本はこのファイルだけを編集すれば済むようにしている。
 
@@ -17,7 +25,16 @@ camera:
                               # カメラで処理25msなら58ms=17fpsに落ちる。false で従来動作。
 
 source:
-  type: webcam          # webcam / video / remote / mjpeg
+  type: remote          # webcam / video / remote / mjpeg
+  remote:
+    host: 0.0.0.0       # 全インタフェースで待つ
+    port: 8765
+    # ブラウザは HTTPS でないとカメラを許可しない。
+    #   python scripts/make_cert.py --host <このPCのIP>
+    # ページと WebSocket を同じポートで出すので、端末で承認する証明書は 1 つ。
+    certfile: certs/cert.pem
+    keyfile: certs/key.pem
+    web_root: web
   # path: sample.mp4    # type=video のとき使う
   # type: remote        # 端末（ブラウザまたはアプリ）を映像入力と警告出力にする。
   #                     # PC がサーバ、端末がクライアント。端末の入力欄に
@@ -243,7 +260,11 @@ policy:
   # model_path: models/model.pkl
 
 feedback:
-  window: true                # OpenCV ウィンドウに表示
+  # 端末が運転者の手元にある構成なので、PC 側の窓は開かない。
+  # 観察用に見たいときは true に戻す。
+  window: false
+  remote: true
+  remote_features: ["ear", "mar", "pitch_rel", "yaw_rel"]                # OpenCV ウィンドウに表示
   window_width: 0             # 表示の幅。0 なら撮影したままの大きさ。撮影解像度とは切り離して
                               # あるので、撮影を軽くしたまま表示だけ大きくすることもできる。
                               # ウィンドウは手でもドラッグして大きさを変えられる。

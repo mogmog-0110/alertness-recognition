@@ -45,22 +45,54 @@ scripts\run.bat --record                   :: 判定の裏で特徴量CSVを run
 
 しきい値やキャリブの有無などの設定は `config\default.yaml`。`--config` で別ファイルも渡せる。
 
-## iPhone をカメラと警告の出口にする
+## 端末をカメラと警告の出口にする
 
 PC は開発機のまま手元に置き、車に載せるのは端末だけ、という構成。端末が撮った映像を
-WebSocket で受け、判定結果を同じ接続で返す。端末側は別リポジトリ（`alertness-ios`）。
+WebSocket で受け、判定結果を同じ接続で返す。
 
-1. `pip install -e .[iphone]`（`websockets` が要る）
-2. `config\default.yaml` の `source.type` を `iphone` にする（既定ポート 8765）
+端末はブラウザでもネイティブアプリでもよい。ブラウザなら何も入れずに使える
+（iPhone / Android / PC のいずれも）。アプリ版は別リポジトリ（`alertness-ios`）。
+
+設定の `iphone` は `remote` に改めた。最初にネイティブアプリで作ったときの名残で、
+いまは端末の種類を選ばない。**旧い `iphone` も受け付けるので既存の設定は壊れない。**
+
+1. `pip install -e .[remote]`（`websockets` と `cryptography` が要る）
+2. `config\default.yaml` の `source.type` を `remote` にする（既定ポート 8765）
 3. Windows のファイアウォールで 8765 の受信を許可する。ここで詰まると
    「端末が繋がらない」という症状になるが、原因が見えにくい
 4. `scripts\run.bat` を起動してから、端末に `ws://<PCのIPアドレス>:8765` を入れる
    （`ipconfig` の IPv4 アドレス。同じ Wi-Fi にいること）
 
+### アプリを入れずにブラウザで使う
+
+端末にアプリを入れずに、ブラウザで URL を開くだけで同じことができる。iPhone でも
+Android でも動く（振動だけは対応端末のみ）。
+
+```bat
+scripts\setup.bat     :: 初回だけ
+scripts\demo.bat
+```
+
+引数は要らない。IP の検出も証明書の作成も自分でやり、端末で開く URL を表示する。
+
+```
+========================================================
+  端末のブラウザで次を開いてください
+      https://192.168.1.10:8765/
+========================================================
+[remote] 待ち受け wss://0.0.0.0:8765
+```
+
+表示された URL を端末のブラウザで開き、証明書の警告を承認して「はじめる」を押す。
+初回起動時に Windows のファイアウォールが確認を出すので**「アクセスを許可する」**を
+選ぶ。ここで拒否すると端末から繋がらず、原因が見えにくい。
+
+手順と困ったときの対処は [docs/BROWSER.md](docs/BROWSER.md)。
+
 端末が手元に無くても、経路だけなら確かめられる。
 
 ```bat
-python examples\iphone_fake_device.py --video clip.mp4
+python examples\fake_device.py --video clip.mp4
 ```
 
 映像を送って返ってきた判定を表示する。`--url` で接続先を変えられる。

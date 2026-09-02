@@ -22,7 +22,7 @@ _LEVEL_NAME = {
 }
 
 
-class IPhoneSink:
+class RemoteSink:
     def __init__(
         self,
         link,
@@ -128,4 +128,4 @@ class IPhoneSink:
         return name
 
     def close(self) -> None:
-        pass  # 接続は IPhoneLink の持ち物。source 側が閉じる
+        pass  # 接続は RemoteLink の持ち物。source 側が閉じる

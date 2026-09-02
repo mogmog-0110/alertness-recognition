@@ -286,16 +286,21 @@ class App:
         return False
 
     def _handle_remote_commands(self) -> None:
-        """端末から届いた操作を反映する。source が対応していなければ何もしない。"""
+        """端末から届いた操作を反映する。source が対応していなければ何もしない。
+
+        フレームの処理ループから呼ぶので、**映像が流れていない間は処理されない**。
+        端末はカメラを開始してから接続するので実害は無いが、映像を止めた状態で
+        命令だけ送っても効かない。
+        """
         take = getattr(self._source, "take_commands", None)
         if not callable(take):
             return
         for command in take():
             if command == "recalibrate":
-                print("[iphone] 端末から再キャリブを受け取りました。")
+                print("[remote] 端末から再キャリブを受け取りました。")
                 self._recalibrate()
             else:
-                print(f"[iphone] 未知の命令を無視しました: {command}")
+                print(f"[remote] 未知の命令を無視しました: {command}")
 
     def _recalibrate(self) -> None:
         # 別人に替わった可能性があるので、本人前提で育てた基準と履歴も捨てる。
