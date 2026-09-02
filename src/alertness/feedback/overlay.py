@@ -103,7 +103,10 @@ def draw_calibration(image: np.ndarray, progress: float) -> np.ndarray:
     x = round(20 * s)
     bw = min(round(300 * s), max(20, img.shape[1] - round(40 * s)))
     _text(img, "CALIBRATING", (x, round(40 * s)), max(0.4, 0.9 * s), (255, 255, 255))
-    hint = "look at the camera with eyes open"
+    # 「カメラを見る」ではない。車載ではカメラは視界の下にあり、運転者が見るのは
+    # 前方の道路。端末を見て基準を取ると、道路を見た瞬間に姿勢のずれが常に乗り、
+    # head_down / nodding が立ちっぱなしになる。基準は普段見る方向で取る。
+    hint = "look where you normally look while driving"
     _text(img, hint, (x, round(70 * s)), max(0.3, 0.6 * s), (255, 255, 255))
     top, bottom = round(84 * s), round(104 * s)
     cv2.rectangle(img, (x, top), (x + int(bw * progress), bottom), (0, 200, 0), -1)
