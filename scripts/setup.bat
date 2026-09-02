@@ -20,8 +20,8 @@ if not exist ".venv" (
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 echo [setup] Installing dependencies ...
-REM remote = 端末(ブラウザ/アプリ)を映像入力にするのに要る websockets と cryptography。
-REM 入れておかないと、ブラウザ版を出そうとしたときに起動できない。
+REM The "remote" extra brings websockets and cryptography, needed to use
+REM a phone or browser as the camera. Without it the demo cannot start.
 pip install -e ".[dev,remote]"
 if errorlevel 1 exit /b 1
 
