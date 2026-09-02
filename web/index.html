@@ -60,7 +60,10 @@ const els = {
   dot: document.getElementById("dot"),
 };
 
-let socket = null, sent = 0, inFlight = 0, lastSent = 0, held = 0, audio = null;
+let socket = null, sent = 0, inFlight = 0, lastSent = 0, audio = null;
+// 警告が始まった時刻と、最後に警告が来た時刻。消すのは後者を基準にするが、
+// 一瞬で消えると読めないので前者から最低表示時間も守る。
+let alertFrom = 0, alertLast = 0;
 // 接続を張り直しただけか、利用者が繋いだ新しいセッションか。
 // 基準はその人・その姿勢・その明るさに属するので、新しいセッションなら測り直す。
 // 通信が切れて自力で張り直したときは測り直さない（測っている間は正面を見て
@@ -70,6 +73,8 @@ let calibrateOnOpen = true, retryDelay = 1000, muted = false;
 // 音が数十個重なって鳴り続ける。間隔を空けないと警告として聞き取れない。
 let lastBeep = 0;
 const BEEP_GAP_MS = 3000;
+const CLEAR_DELAY_MS = 700;    // 判定の途切れを跨ぐぶん
+const MIN_VISIBLE_MS = 1500;   // 一瞬の警告でも読める長さ
 
 function recalibrate() {
   if (socket && socket.readyState === 1) socket.send(JSON.stringify({ command: "recalibrate" }));
@@ -150,15 +155,23 @@ function show(result) {
     set(`${head}: ${g.title || ""}${left}`, { reason: g.instruction || "" });
     return;
   }
+  const now = performance.now();
   if (result.alert) {
     set(result.message || "警告", { alert: true, reason: result.dimension || "" });
     beep(result.level || "medium");
     buzz(result.level || "medium");
-    held = performance.now();
+    if (now - alertLast > CLEAR_DELAY_MS) alertFrom = now;
+    alertLast = now;
     return;
   }
-  // 警告は 4 秒保持する。判定は毎秒 30 回返るので、素直に消すと見えない。
-  if (performance.now() - held > 4000) set("");
+  if (!alertLast) return;
+  // 判定は途切れることがあるので、少しの空白では消さない。ただし基準は
+  // 「最後の警告」なので、危険が去れば表示もすぐ消える。音が止まったのに
+  // 表示だけ残る、という食い違いを作らない。
+  if (now - alertLast < CLEAR_DELAY_MS) return;
+  if (now - alertFrom < MIN_VISIBLE_MS) return;
+  alertLast = 0;
+  set("");
 }
 
 function connect() {
