@@ -13,7 +13,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "pyright>=1.1"]
-iphone = ["websockets>=13", "cryptography>=42"]  # cryptography はブラウザ版の証明書に使う                   # source.type=iphone のときだけ要る
+remote = ["websockets>=13", "cryptography>=42"]  # 端末を映像入力にするときだけ要る
+iphone = ["websockets>=13", "cryptography>=42"]  # 旧称。既存の手順を壊さないため残す
 ml = ["scikit-learn==1.9.0", "joblib>=1.3"]   # 版は colab の requirements と揃える（model.pkl の版ズレ防止）
 
 [project.scripts]

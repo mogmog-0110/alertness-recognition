@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     print("  8765 の受信を許可してください。")
     print("=" * 56)
     print()
-    # 証明書は起動時に IPhoneLink が用意する（IP が変わっていれば作り直す）。
+    # 証明書は起動時に RemoteLink が用意する（IP が変わっていれば作り直す）。
     return run_app(["--config", config, *(argv or sys.argv[1:])])
 
 

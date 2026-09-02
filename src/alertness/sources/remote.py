@@ -1,7 +1,7 @@
 """iPhone からの映像入力。WebSocket サーバとして待ち受ける。
 
 webcam と違い、こちらは待ち受け側で、端末が繋ぎに来る。判定結果を返すのに同じ接続が
-要るので、接続は IPhoneLink が持ち、映像を読む source と結果を返す sink がそれを共有する。
+要るので、接続は RemoteLink が持ち、映像を読む source と結果を返す sink がそれを共有する。
 
 asyncio は専用スレッドで回す。app.py は同期のループなので、そこへイベントループを
 持ち込まない。
@@ -35,7 +35,7 @@ _POLL_SECONDS = 0.001
 _MIN_STEP_SECONDS = 0.001
 
 
-class IPhoneLink:
+class RemoteLink:
     """端末との WebSocket 接続。最新フレームを保持し、判定結果を送り返す。
 
     1 台だけを相手にする。2 台目が繋いできたら、結果の宛先は新しい方に移る。
@@ -149,13 +149,13 @@ class IPhoneLink:
             self._port = server.sockets[0].getsockname()[1]
             self._ready.set()
             scheme = "wss" if context else "ws"
-            print(f"[iphone] 待ち受け {scheme}://{self._host}:{self._port}")
+            print(f"[remote] 待ち受け {scheme}://{self._host}:{self._port}")
             if self._web_root:
                 from ..webcert import local_ip
 
                 page = "https" if context else "http"
                 address = self._address or local_ip()
-                print(f"[iphone] 端末のブラウザで開く: {page}://{address}:{self._port}/")
+                print(f"[remote] 端末のブラウザで開く: {page}://{address}:{self._port}/")
             await self._finished.wait()
 
     def _ssl_context(self):
@@ -176,7 +176,7 @@ class IPhoneLink:
 
         self._address, renewed = ensure(self._certfile, self._keyfile)
         if renewed:
-            print(f"[iphone] {self._address} 用の証明書を作りました（端末で再度承認が要ります）")
+            print(f"[remote] {self._address} 用の証明書を作りました（端末で再度承認が要ります）")
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(self._certfile, self._keyfile)
         return context
@@ -220,7 +220,7 @@ class IPhoneLink:
 
         self._ws = ws
         self._new_session = True
-        print("[iphone] 接続しました。")
+        print("[remote] 接続しました。")
         try:
             async for message in ws:
                 self._accept(message)
@@ -229,7 +229,7 @@ class IPhoneLink:
         finally:
             if self._ws is ws:
                 self._ws = None
-            print("[iphone] 接続が切れました。待ち受けを続けます。")
+            print("[remote] 接続が切れました。待ち受けを続けます。")
 
     def _accept(self, message) -> None:
         """1 メッセージを取り込む。壊れていれば黙って捨てる。
@@ -293,20 +293,20 @@ class IPhoneLink:
         return stamped
 
 
-class IPhoneSource:
-    """FrameSource。IPhoneLink が受けた最新フレームを流す。
+class RemoteSource:
+    """FrameSource。RemoteLink が受けた最新フレームを流す。
 
     繋がっていない間は何も yield しない。app.py のループはそこで止まるので、
     画面もキーも無い運転で終われるように interrupt() を持つ。
     """
 
-    def __init__(self, link: IPhoneLink) -> None:
+    def __init__(self, link: RemoteLink) -> None:
         self._link = link
         self._index = 0
         self._stop = threading.Event()
 
     @property
-    def link(self) -> IPhoneLink:
+    def link(self) -> RemoteLink:
         """結果の返送に使う接続。sink がここから同じ接続を掴む。"""
         return self._link
 

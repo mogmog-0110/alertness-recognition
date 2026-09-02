@@ -297,10 +297,10 @@ class App:
             return
         for command in take():
             if command == "recalibrate":
-                print("[iphone] 端末から再キャリブを受け取りました。")
+                print("[remote] 端末から再キャリブを受け取りました。")
                 self._recalibrate()
             else:
-                print(f"[iphone] 未知の命令を無視しました: {command}")
+                print(f"[remote] 未知の命令を無視しました: {command}")
 
     def _recalibrate(self) -> None:
         # 別人に替わった可能性があるので、本人前提で育てた基準と履歴も捨てる。

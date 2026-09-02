@@ -25,8 +25,8 @@ camera:
                               # カメラで処理25msなら58ms=17fpsに落ちる。false で従来動作。
 
 source:
-  type: iphone          # webcam / video / iphone / mjpeg
-  iphone:
+  type: remote          # webcam / video / remote / mjpeg
+  remote:
     host: 0.0.0.0       # 全インタフェースで待つ
     port: 8765
     # ブラウザは HTTPS でないとカメラを許可しない。
@@ -36,14 +36,14 @@ source:
     keyfile: certs/key.pem
     web_root: web
   # path: sample.mp4    # type=video のとき使う
-  # type: iphone        # iPhone アプリ（alertness-ios）を映像入力と警告出力にする。
+  # type: remote        # 端末（ブラウザまたはアプリ）を映像入力と警告出力にする。
   #                     # PC がサーバ、端末がクライアント。端末の入力欄に
   #                     # ws://<PCのIPアドレス>:8765 を入れる（ipconfig の IPv4 アドレス。
   #                     # 同じ Wi-Fi にいること）。Windows のファイアウォールで 8765 の
   #                     # 受信を許可しておく。ここで詰まると「繋がらない」という症状に
   #                     # なるが原因が見えにくい。
   #                     # mjpeg と違い、撮影時刻を端末が付けて送るので rPPG も使える。
-  # iphone:
+  # remote:
   #   host: 0.0.0.0     # 全インタフェースで待つ。特定の NIC に絞るなら IP を書く
   #   port: 8765
   #   # ブラウザ版 (アプリを入れずにブラウザで使う) を出すときだけ設定する。
@@ -263,8 +263,8 @@ feedback:
   # 端末が運転者の手元にある構成なので、PC 側の窓は開かない。
   # 観察用に見たいときは true に戻す。
   window: false
-  iphone: true
-  iphone_features: ["ear", "mar", "pitch_rel", "yaw_rel"]                # OpenCV ウィンドウに表示
+  remote: true
+  remote_features: ["ear", "mar", "pitch_rel", "yaw_rel"]                # OpenCV ウィンドウに表示
   window_width: 0             # 表示の幅。0 なら撮影したままの大きさ。撮影解像度とは切り離して
                               # あるので、撮影を軽くしたまま表示だけ大きくすることもできる。
                               # ウィンドウは手でもドラッグして大きさを変えられる。
@@ -294,10 +294,10 @@ feedback:
   alert_min_interval_seconds: 1.5   # どれだけ詰めてもこれより短くしない
   alert_escalate_factor: 0.7        # HIGH が続く間、鳴らすたびに間隔にかける係数
   audio: true                 # やわらかいチャイムで警告（Windows）
-  # source.type: iphone のとき、判定結果を端末へ返して端末側で警告する。運転者の手元に
+  # source.type: remote のとき、判定結果を端末へ返して端末側で警告する。運転者の手元に
   # あるのは端末なので、実車ではここが警告の出口になる。
-  iphone: true
-  iphone_features: []         # 端末に送る特徴量。開発中の切り分け用で、無くても動く。
+  remote: true
+  remote_features: []         # 端末に送る特徴量。開発中の切り分け用で、無くても動く。
                               # 例: [ear, mar, pitch, yaw]
   # 端末に出す軸の表示名。OpenCV の窓は日本語を描けないので軸名は英語のままにしてあるが、
   # 端末の画面は日本語で出せる。ここに無い軸は軸名がそのまま出る。

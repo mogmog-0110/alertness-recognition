@@ -76,11 +76,13 @@ def build_source(
         if not path:
             raise ValueError("source.type=video には path（または --video）が必要です。")
         return VideoFileSource(path, realtime)
-    if stype == "iphone":
-        from .sources.iphone_ws import IPhoneLink, IPhoneSource
+    if stype in ("remote", "iphone"):
+        # iphone は旧称。最初にネイティブアプリで作ったときの名残で、いまは
+        # ブラウザからも繋がる。既存の設定を壊さないよう受け付けたままにする。
+        from .sources.remote import RemoteLink, RemoteSource
 
-        net = source.get("iphone", {})
-        link = IPhoneLink(
+        net = source.get("remote", source.get("iphone", {}))
+        link = RemoteLink(
             net.get("host", "0.0.0.0"),
             int(net.get("port", 8765)),
             certfile=net.get("certfile", ""),
@@ -88,7 +90,7 @@ def build_source(
             web_root=net.get("web_root", ""),
         )
         link.wait_ready()  # 番号が使用中なら、繋がらない症状ではなくここで分かる
-        return IPhoneSource(link)
+        return RemoteSource(link)
     if stype == "mjpeg":
         from .sources.mjpeg import MjpegSource
 
@@ -274,28 +276,28 @@ def build_sinks(
             )
         )
 
-    iphone = _iphone_sink(feedback, source)
-    if iphone is not None:
-        sinks.append(iphone)
+    remote = _remote_sink(feedback, source)
+    if remote is not None:
+        sinks.append(remote)
 
     from .feedback.composite import CompositeSink
 
     return CompositeSink(sinks)
 
 
-def _iphone_sink(feedback: dict[str, Any], source: FrameSource | None):
-    if source is None or not feedback.get("iphone", True):
+def _remote_sink(feedback: dict[str, Any], source: FrameSource | None):
+    if source is None or not feedback.get("remote", feedback.get("iphone", True)):
         return None
-    from .sources.iphone_ws import IPhoneSource
+    from .sources.remote import RemoteSource
 
-    if not isinstance(source, IPhoneSource):
+    if not isinstance(source, RemoteSource):
         return None
-    from .feedback.iphone_ws import IPhoneSink
+    from .feedback.remote import RemoteSink
 
-    return IPhoneSink(
+    return RemoteSink(
         source.link,
-        features=tuple(feedback.get("iphone_features", ())),
-        names=feedback.get("iphone_names", {}),
+        features=tuple(feedback.get("remote_features", feedback.get("iphone_features", ()))),
+        names=feedback.get("remote_names", feedback.get("iphone_names", {})),
     )
 
 
