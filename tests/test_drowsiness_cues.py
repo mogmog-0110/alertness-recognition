@@ -162,3 +162,29 @@ def test_blink_dynamics_survives_one_long_closure():
         make_observation(with_outlier[-1], FakeHistory(with_outlier))
     )
     assert result.score < 0.9, "外れ値 1 個で満点にはしない"
+
+
+def test_blink_dynamics_thresholds_match_the_measured_awake_range():
+    """覚醒時の普通の瞬きで立たないこと。
+
+    文献値 (通常 150ms) はこの構成には低すぎた。実測 (acted_long / 1状態90秒)
+    では覚醒時の閉眼中央値が 233ms あり、普通に瞬きしているだけでスコアが
+    0.72 まで上がっていた。眠気時は中央値 1667ms で、7 倍の差がある。
+    """
+    from alertness.classifier.cues.blink_dynamics import BlinkDynamicsCue
+
+    tuned = dict(
+        normal_seconds=0.40, drowsy_seconds=1.20,
+        normal_reopen=0.20, drowsy_reopen=0.45,
+    )
+    awake = _blink_series(closed_seconds=0.233, count=6)
+    result = BlinkDynamicsCue(**tuned).evaluate(
+        make_observation(awake[-1], FakeHistory(awake))
+    )
+    assert result.score < 0.3, "覚醒時の実測中央値では立たない"
+
+    drowsy = _blink_series(closed_seconds=1.667, count=6)
+    result = BlinkDynamicsCue(**tuned).evaluate(
+        make_observation(drowsy[-1], FakeHistory(drowsy))
+    )
+    assert result.score > 0.7, "眠気時の実測中央値では立つ"
