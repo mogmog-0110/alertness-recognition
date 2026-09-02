@@ -56,6 +56,7 @@ class IPhoneLink:
         self._certfile = certfile
         self._keyfile = keyfile
         self._web_root = os.path.abspath(web_root) if web_root else None
+        self._address = ""
         self._latest = LatestFrame()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._finished: asyncio.Event | None = None
@@ -150,20 +151,32 @@ class IPhoneLink:
             scheme = "wss" if context else "ws"
             print(f"[iphone] 待ち受け {scheme}://{self._host}:{self._port}")
             if self._web_root:
+                from ..webcert import local_ip
+
                 page = "https" if context else "http"
-                print(f"[iphone] ブラウザ版: {page}://<このPCのIP>:{self._port}/")
+                address = self._address or local_ip()
+                print(f"[iphone] 端末の Safari で開く: {page}://{address}:{self._port}/")
             await self._finished.wait()
 
     def _ssl_context(self):
-        """証明書があれば TLS で待ち受ける。
+        """証明書を今の IP に合わせて用意し、TLS で待ち受ける。
 
         iOS Safari は HTTPS でないとカメラを許可しない。ページと WebSocket を
         同じポートで出すので、端末側で承認する証明書は 1 つで済む。
+
+        IP は DHCP で変わる。証明書の IP が現在と違うと iOS は接続を拒み、
+        「ページは開けるのにカメラが出ない」という原因の見えない失敗になるので、
+        起動のたびに確かめて必要なら作り直す。
         """
         if not (self._certfile and self._keyfile):
             return None
         import ssl
 
+        from ..webcert import ensure
+
+        self._address, renewed = ensure(self._certfile, self._keyfile)
+        if renewed:
+            print(f"[iphone] {self._address} 用の証明書を作りました（端末で再度承認が要ります）")
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(self._certfile, self._keyfile)
         return context
