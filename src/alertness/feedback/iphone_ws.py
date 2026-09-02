@@ -34,8 +34,14 @@ class IPhoneSink:
         self._alert_from = alert_from
         self._features = features
         self._names = dict(names or {})
+        # ガイド中に判定 payload も送ると、端末が指示と判定を毎フレーム
+        # 行き来して激しく点滅する (実測: 30fps でそのまま切り替わった)。
+        # 指示が来ている間は画面を指示に譲る。
+        self._guiding_until = 0.0
 
     def emit(self, obs: Observation, assessment: Assessment) -> None:
+        if obs.features.timestamp < self._guiding_until:
+            return  # 収録中。画面は指示が持っている
         level = assessment.alert_level()
         payload: dict = {
             "timestamp": assessment.timestamp,
@@ -63,6 +69,9 @@ class IPhoneSink:
         ready は「次はこれをやる」の予告、hold が実際の記録区間。端末側は
         残り秒数と全体の進捗を出す。
         """
+        # 指示が途切れるまでは判定を送らない。両方を毎フレーム送ると、端末が
+        # 指示と判定を 30 回/秒で行き来して激しく点滅する。
+        self._guiding_until = obs.features.timestamp + 1.0
         self._link.send(
             {
                 "timestamp": obs.features.timestamp,
@@ -78,18 +87,28 @@ class IPhoneSink:
             }
         )
 
-    def calibrating(self, obs: Observation, progress: float) -> None:
+    def calibrating(
+        self, obs: Observation, progress: float,
+        waiting_for: str = "", expected_seconds: float = 0.0,
+    ) -> None:
         # 端末はこれを見て「正面を見てください」と進捗を出し、警告を鳴らさない。
         # 基準が無いままの判定で鳴らしても意味が無い。
-        self._link.send(
-            {
-                "timestamp": obs.features.timestamp,
-                "phase": "calibrating",
-                "progress": max(0.0, min(1.0, float(progress))),
-                "message": "基準を測っています",
-                "alert": False,
-            }
-        )
+        #
+        # waiting_for は「進捗が伸びない理由」。心拍の基準は 20 秒の窓が満ちる
+        # までゼロのままなので、理由を出さないと故障に見える。
+        # progress は素の値をそのまま送る。心拍待ちの間は 0 のまま動かず最後に
+        # 跳ねる量なので、端末はバーではなく回転表示で「動いている」ことだけを
+        # 伝える。経過時間で滑らかに見せるのは、実態と違う値を出すことになる。
+        payload = {
+            "timestamp": obs.features.timestamp,
+            "phase": "calibrating",
+            "progress": max(0.0, min(1.0, float(progress))),
+            "message": "基準を測っています",
+            "alert": False,
+        }
+        if waiting_for:
+            payload["waiting_for"] = waiting_for
+        self._link.send(payload)
 
     def _selected(self, obs: Observation) -> dict[str, float]:
         # NaN は JSON では表せない（json は NaN を吐くが受け側の JSONDecoder が拒む）。

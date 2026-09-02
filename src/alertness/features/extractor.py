@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from ..contracts import FaceLandmarks, Features
+from ..contracts import FaceLandmarks, Features, Pose
 from ..geometry import euclidean
 from . import landmark_ids as ids
 from .ear import eye_aspect_ratio
 from .gaze import horizontal_gaze_ratio, vertical_gaze_ratio
+from .head_pose import _wrap as _wrap_deg
 from .head_pose import estimate_pose
 from .mouth import mouth_aspect_ratio
 
@@ -75,6 +76,45 @@ BLENDSHAPE_COLUMNS = (
 class FaceFeatureExtractor:
     """幾何ベースの特徴量を計算する。しきい値判定はしない。"""
 
+    def __init__(self) -> None:
+        # 直前に採用した姿勢とその時刻。ありえない飛びを捨てるのに使う。
+        self._last_pose: tuple[Pose | None, float] = (None, 0.0)
+
+    # 頭が実際に動ける速さの上限 (度/秒)。素早く振り向く動作でも 300 度/秒には
+    # 届かない。これを超える変化は solvePnP の反転解や検出のちらつきであって、
+    # 実際の動きではない。
+    MAX_POSE_RATE_DEG_PER_SEC = 300.0
+
+    def _stable_pose(self, landmarks: FaceLandmarks, timestamp: float) -> Pose:
+        """物理的にありえない姿勢の飛びを捨てる。
+
+        solvePnP は時折もう一方の解へ飛び、pitch が 1 フレームで 100 度以上
+        変わることがある (実測: 30fps で 40 度以上の飛びが 62 回)。1 フレームの
+        飛びでも、うなずき判定は「8 度以上の上下動」を数えるので偽のうなずきが
+        立ち、60 秒の窓のあいだ眠気が最大に張り付く。
+
+        直前の姿勢と比べて速すぎる変化は、その場の推定を捨てて直前を使う。
+        本当に速い動きは連続するので、次のフレームで追いつく。
+        """
+        pose = estimate_pose(landmarks)
+        previous, previous_at = self._last_pose
+        if previous is None or timestamp <= previous_at:
+            self._last_pose = (pose, timestamp)
+            return pose
+        elapsed = timestamp - previous_at
+        limit = self.MAX_POSE_RATE_DEG_PER_SEC * elapsed
+        moved = max(
+            abs(_wrap_deg(pose.pitch - previous.pitch)),
+            abs(_wrap_deg(pose.yaw - previous.yaw)),
+            abs(_wrap_deg(pose.roll - previous.roll)),
+        )
+        if moved > limit:
+            # 捨てる。時刻は進めて、次のフレームで追いつけるようにする。
+            self._last_pose = (previous, timestamp)
+            return previous
+        self._last_pose = (pose, timestamp)
+        return pose
+
     def extract(self, landmarks: FaceLandmarks, timestamp: float) -> Features:
         if not landmarks.detected:
             return Features(values={}, timestamp=timestamp, face_present=False)
@@ -89,7 +129,7 @@ class FaceFeatureExtractor:
             landmarks.pixel(ids.MOUTH_LEFT),
             landmarks.pixel(ids.MOUTH_RIGHT),
         )
-        pose = estimate_pose(landmarks)
+        pose = self._stable_pose(landmarks, timestamp)
         face_scale = euclidean(
             landmarks.pixel(ids.LEFT_EYE_OUTER), landmarks.pixel(ids.RIGHT_EYE_OUTER)
         )

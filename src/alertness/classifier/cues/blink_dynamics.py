@@ -17,6 +17,7 @@ from __future__ import annotations
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
 from ._episodes import closure_episodes
+from ._support import recency_weight, weighted_median as _weighted_median
 from ._support import window_coverage, window_values
 
 
@@ -36,6 +37,7 @@ class BlinkDynamicsCue:
         min_blinks: int = 3,
         max_yaw: float = 25.0,
         min_coverage: float = 0.5,
+        half_life_seconds: float = 20.0,
     ) -> None:
         self.window_seconds = window_seconds  # 瞬きを集める窓
         self.closed_ratio = closed_ratio  # 開眼基準の何割を下回ったら閉じ始めか
@@ -46,6 +48,9 @@ class BlinkDynamicsCue:
         self.drowsy_reopen = drowsy_reopen  # ここまで遅れたら満点
         self.min_blinks = min_blinks  # これだけ瞬きを見ないと平均を出さない
         self.max_yaw = max_yaw  # 横顔では EAR が壊れるので判定しない
+        # 古い瞬きの重みが半分になるまでの時間。素の平均だと 1 回の長い瞬きが
+        # 窓の長さぶん効き続け、直後に普通の瞬きを重ねても下がりきらない。
+        self.half_life_seconds = half_life_seconds
         self.min_coverage = min_coverage  # 窓のうち顔が見えていた時間の下限
 
     def evaluate(self, obs: Observation) -> CueResult:
@@ -66,15 +71,28 @@ class BlinkDynamicsCue:
             detail = f"瞬き {len(episodes)}回（観察中）"
             return CueResult(self.name, self.dimension, 0.0, False, detail, None, False)
 
-        duration = _mean(e.duration for e in episodes)
-        reopens = [e.reopen_seconds for e in episodes if e.reopen_seconds is not None]
+        # 中央値を使う。平均だと外れ値 1 個で跳ねる (実測: 中央値 100ms のところ
+        # 平均が 422ms まで上がり、眠気の警告が立ち続けた)。窓に入る瞬きは数回
+        # しかないので min_blinks では守れない。あわせて古い瞬きほど軽く扱う。
+        now = times[-1] if times else 0.0
+        weights = [recency_weight(now - e.end, self.half_life_seconds) for e in episodes]
+        duration = _weighted_median([e.duration for e in episodes], weights)
+        reopen_pairs = [
+            (e.reopen_seconds, w)
+            for e, w in zip(episodes, weights, strict=True)
+            if e.reopen_seconds is not None
+        ]
         by_duration = _ramp(duration, self.normal_seconds, self.drowsy_seconds)
         by_reopen = 0.0
-        if reopens:
-            by_reopen = _ramp(_mean(reopens), self.normal_reopen, self.drowsy_reopen)
+        if reopen_pairs:
+            by_reopen = _ramp(
+                _weighted_median([v for v, _ in reopen_pairs], [w for _, w in reopen_pairs]),
+                self.normal_reopen,
+                self.drowsy_reopen,
+            )
 
         score = max(by_duration, by_reopen)
-        detail = f"閉眼 {duration * 1000:.0f}ms 戻り {_ms(reopens)}"
+        detail = f"閉眼 {duration * 1000:.0f}ms 戻り {_ms([v for v, _ in reopen_pairs])}"
         return CueResult(self.name, self.dimension, score, score >= 1.0, detail)
 
 

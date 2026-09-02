@@ -92,3 +92,51 @@ def trailing_true_seconds(times: Sequence[float], flags: Sequence[bool]) -> floa
             break
         start = t
     return max(0.0, times[-1] - start)
+
+
+def recency_weight(age_seconds: float, half_life_seconds: float) -> float:
+    """古い証拠ほど軽くするための重み。半減期で指数的に減る。
+
+    箱型の窓は「窓に入っている間は同じ重み、出たら消える」ので、姿勢を直しても
+    最大で窓の長さぶん警告が残る（実測: 眠気の警告が最長 30 秒続いた）。運転者が
+    直したのに鳴り続ける警告は、警告として働かない。
+
+    かといって窓を縮めると、ゆっくり繰り返す兆候を取り逃がす。古い証拠を残しつつ
+    重みだけ落とすことで、貯める性質と戻りの速さを両立させる。
+    """
+    if half_life_seconds <= 0:
+        return 1.0
+    return float(0.5 ** (max(0.0, age_seconds) / half_life_seconds))
+
+
+def weighted_mean(values: Sequence[float], weights: Sequence[float]) -> float:
+    """重み付き平均。重みの合計が 0 なら素の平均に落とす。"""
+    total = sum(weights)
+    if total <= 0:
+        return sum(values) / len(values) if values else 0.0
+    return sum(v * w for v, w in zip(values, weights, strict=True)) / total
+
+
+def weighted_median(values: Sequence[float], weights: Sequence[float]) -> float:
+    """重み付き中央値。重みの合計が 0 なら素の中央値に落とす。
+
+    平均は外れ値 1 個で跳ねる。瞬きは 60 秒の窓に数回しか入らないので、
+    1 回の長い閉眼 (検出の途切れや、意図的に目を閉じた瞬間) がそのまま判定に
+    なる。実測では中央値 100ms なのに平均が 422ms まで上がり、眠気の警告が
+    立ち続けた。
+    """
+    pairs = sorted(zip(values, weights, strict=True))
+    total = sum(w for _, w in pairs)
+    if not pairs:
+        return 0.0
+    if total <= 0:
+        middle = len(pairs) // 2
+        if len(pairs) % 2:
+            return pairs[middle][0]
+        return (pairs[middle - 1][0] + pairs[middle][0]) / 2
+    seen = 0.0
+    for value, weight in pairs:
+        seen += weight
+        if seen >= total / 2:
+            return value
+    return pairs[-1][0]

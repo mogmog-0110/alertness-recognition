@@ -25,12 +25,15 @@ class CompositeSink:
             if callable(notify):
                 notify(obs, title, instruction, phase, remaining, progress)
 
-    def calibrating(self, obs: Observation, progress: float) -> None:
+    def calibrating(
+        self, obs: Observation, progress: float,
+        waiting_for: str = "", expected_seconds: float = 0.0,
+    ) -> None:
         # 実装は任意なので、持っている sink にだけ渡す。
         for sink in self._sinks:
             notify = getattr(sink, "calibrating", None)
             if callable(notify):
-                notify(obs, progress)
+                notify(obs, progress, waiting_for, expected_seconds)
 
     def close(self) -> None:
         for sink in self._sinks:

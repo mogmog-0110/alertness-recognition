@@ -246,7 +246,9 @@ class App:
         # 手元に窓が無い構成 (端末が離れている) でも進捗が伝わるようにする。
         notify = getattr(self._sinks, "calibrating", None)
         if callable(notify):
-            notify(obs, self._calibrator.progress)
+            waiting = getattr(self._calibrator, "waiting_for", "")
+            expected = float(getattr(self._calibrator, "expected_seconds", 0.0))
+            notify(obs, self._calibrator.progress, waiting, expected)
         if self._gui:
             from .feedback import display, overlay
 

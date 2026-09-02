@@ -28,6 +28,7 @@ class StatisticalCalibrator:
         require_keys: tuple[str, ...] = (),
         max_seconds: float = 0.0,
     ) -> None:
+        self._fps = float(fps)
         self._needed = max(5, int(duration_seconds * fps))
         self._warmup = int(warmup_seconds * fps)
         # 心拍など、遅れて出る特徴を安静基準に含めたいときに指定する。出そろうまで確定を待つ。
@@ -56,6 +57,35 @@ class StatisticalCalibrator:
         # 幾何が揃い、かつ要求した特徴（心拍など）も最小数そろって初めて完了。
         key_ratio = min(self._key_count(key) / self._min_key for key in self._require)
         return min(1.0, frame_ratio, key_ratio)
+
+    @property
+    def expected_seconds(self) -> float:
+        """完了までのおおよその上限。進捗バーの分母に使う。
+
+        心拍待ちのある構成では、幾何が揃ってからも窓が満ちるまで進捗が伸びない。
+        分母を duration_seconds にすると「0 のまま止まって最後に一気に動く」
+        バーになるので、待ちを含む上限を返す。
+        """
+        if self._max:
+            return self._max / max(self._fps, 1.0)
+        return self._needed / max(self._fps, 1.0)
+
+    @property
+    def waiting_for(self) -> str:
+        """進捗が伸びない理由。揃っていれば空文字。
+
+        心拍の安静基準は rPPG の窓 (既定 20 秒) が満ちるまで出ないので、
+        幾何がとっくに揃っていても進捗が 0 のまま止まって見える。理由を
+        出さないと故障と区別できない。
+        """
+        if not self._require:
+            return ""
+        if len(self._samples) < self._needed:
+            return ""
+        for key in self._require:
+            if self._key_count(key) < self._min_key:
+                return key
+        return ""
 
     def _key_count(self, key: str) -> int:
         return sum(1 for f in self._samples if not math.isnan(f.get(key)))

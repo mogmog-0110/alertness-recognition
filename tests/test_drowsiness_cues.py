@@ -112,3 +112,53 @@ def test_face_absent_tolerates_a_single_dropped_frame():
     result = _evaluate(FaceAbsentCue(grace_seconds=0.5), frames)
     assert not result.active
     assert result.score == 0.0
+
+
+def test_nodding_fades_after_you_stop():
+    """うなずくのをやめたら、窓の長さを待たずに下がる。
+
+    箱型の窓だけだと、姿勢を直しても最大で窓の長さぶん警告が残る
+    (実測: 眠気の警告が最長 30 秒続いた)。直したのに鳴り続ける警告は
+    警告として働かない。
+    """
+    pattern: list[float] = []
+    for _ in range(3):
+        pattern += [0.0] * 20 + [12.0] * 5 + [0.0] * 20
+    fresh = _evaluate(NoddingCue(nods_drowsy=3), _pitch_series(pattern))
+    assert fresh.active
+
+    # うなずいたあと、静止したまま 20 秒経過させる (1 サンプル 0.1 秒なので 200 個)。
+    # 窓は 60 秒なので、うなずき自体はまだ窓の中に残っている。
+    stale = _evaluate(NoddingCue(nods_drowsy=3), _pitch_series(pattern + [0.0] * 200))
+    assert "3回" in stale.detail, "回数の数え方は変えない"
+    assert not stale.active, "止めたら警告は下りる"
+    assert stale.score < fresh.score / 2, "スコアも下がる"
+
+
+def test_blink_dynamics_survives_one_long_closure():
+    """1 回の長い閉眼で判定が跳ねない。
+
+    窓に入る瞬きは数回しかないので、平均だと外れ値 1 個がそのまま判定になる
+    (実測: 中央値 100ms のところ平均が 422ms まで上がり、覚醒しているのに
+    眠気の警告が立ち続けた)。
+    """
+    frames = _blink_series(closed_seconds=0.10, count=5)
+    normal = BlinkDynamicsCue().evaluate(
+        make_observation(frames[-1], FakeHistory(frames))
+    )
+    assert normal.score < 0.5, "普通の瞬きでは立たない"
+
+    # 同じ並びの途中に、1 回だけ 1 秒の閉眼を混ぜる。
+    values: list[float] = []
+    for i in range(5):
+        values += [1.0] * int(3.0 / STEP)
+        closed = 1.0 if i == 2 else 0.10
+        values += [0.2] * max(1, int(closed / STEP))
+    values += [1.0] * int(3.0 / STEP)
+    with_outlier = [
+        Features({"ear_norm": v, "yaw_rel": 0.0}, i * STEP) for i, v in enumerate(values)
+    ]
+    result = BlinkDynamicsCue().evaluate(
+        make_observation(with_outlier[-1], FakeHistory(with_outlier))
+    )
+    assert result.score < 0.9, "外れ値 1 個で満点にはしない"
