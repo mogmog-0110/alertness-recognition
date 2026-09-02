@@ -59,6 +59,8 @@ class IPhoneLink:
         self._last_stamped = float("-inf")
         self._last_seen = 0.0
         self._ready = threading.Event()
+        self._commands: list[str] = []
+        self._commands_lock = threading.Lock()
         self._error: BaseException | None = None
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
@@ -155,12 +157,15 @@ class IPhoneLink:
             print("[iphone] 接続が切れました。待ち受けを続けます。")
 
     def _accept(self, message) -> None:
-        """1 メッセージを 1 フレームとして取り込む。壊れていれば黙って捨てる。
+        """1 メッセージを取り込む。壊れていれば黙って捨てる。
 
-        取りこぼしは正常な動作（端末は送信が詰まると新しいフレームを捨てる）なので、
-        1 枚読めなかったことを異常として扱わない。流れが止まったこと自体は Watchdog が
-        知らせる。
+        バイナリは映像、テキストは制御命令。取りこぼしは正常な動作（端末は送信が
+        詰まると新しいフレームを捨てる）なので、1 枚読めなかったことを異常として
+        扱わない。流れが止まったこと自体は Watchdog が知らせる。
         """
+        if isinstance(message, str):
+            self._accept_command(message)
+            return
         if not isinstance(message, bytes | bytearray) or len(message) <= _HEADER.size:
             return
         (captured,) = _HEADER.unpack_from(message, 0)
@@ -170,6 +175,27 @@ class IPhoneLink:
             return
         # 常に最新の 1 枚だけ。遅れて届いた過去のフレームに価値は無い。
         self._latest.put(image, self._stamp(float(captured)))
+
+    def _accept_command(self, text: str) -> None:
+        """端末からの制御命令。いまは再キャリブだけ。
+
+        端末は運転者の手元にあり、PC の画面もキーボードも触れない。基準を取り直す
+        手段が PC 側のキー操作しか無いと、実験のたびにプロセスを落とすことになる。
+        """
+        try:
+            command = json.loads(text).get("command", "")
+        except (ValueError, AttributeError):
+            return
+        if not isinstance(command, str) or not command:
+            return
+        with self._commands_lock:
+            self._commands.append(command)
+
+    def take_commands(self) -> list[str]:
+        """溜まった命令を取り出す。読んだ分は消える。"""
+        with self._commands_lock:
+            pending, self._commands = self._commands, []
+        return pending
 
     def _stamp(self, captured: float) -> float:
         """撮影時刻を、前へ戻らない時刻に直す。
@@ -208,6 +234,10 @@ class IPhoneSource:
     def link(self) -> IPhoneLink:
         """結果の返送に使う接続。sink がここから同じ接続を掴む。"""
         return self._link
+
+    def take_commands(self) -> list[str]:
+        """端末から届いた制御命令。読んだ分は消える。"""
+        return self._link.take_commands()
 
     def frames(self) -> Iterator[Frame]:
         served = 0

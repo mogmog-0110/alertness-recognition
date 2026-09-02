@@ -117,6 +117,19 @@ class FeedbackSink(Protocol):
 
 
 @runtime_checkable
+class RemoteControlled(Protocol):
+    """離れた端末から操作を受け取れる入力源。
+
+    端末は運転者の手元にあり、PC の画面もキーボードも触れない。基準を取り直す
+    手段が PC 側のキー操作しか無いと、実験のたびにプロセスを落とすことになる。
+
+    実装は任意。この口を持たない source には呼ばれない。
+    """
+
+    def take_commands(self) -> list[str]: ...
+
+
+@runtime_checkable
 class CalibrationAware(Protocol):
     """キャリブ中の進み具合も受け取れる出力先。
 
