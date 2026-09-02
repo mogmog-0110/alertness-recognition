@@ -130,6 +130,23 @@ class RemoteControlled(Protocol):
 
 
 @runtime_checkable
+class GuidedAware(Protocol):
+    """収録の指示を表示できる出力先。
+
+    ガイド付き収録の指示は PC の窓に描かれるが、端末を車載位置に置いた運転者に
+    そこは見えない。指示が見えなければ演技のしようがなく、実車に近い置き方での
+    収録ができない。
+
+    実装は任意。この口を持たない sink には呼ばれない。
+    """
+
+    def guiding(
+        self, obs: Observation, title: str, instruction: str,
+        phase: str, remaining: float, progress: float,
+    ) -> None: ...
+
+
+@runtime_checkable
 class CalibrationAware(Protocol):
     """キャリブ中の進み具合も受け取れる出力先。
 
