@@ -105,7 +105,14 @@ cues:
   # 瞬きの遅さ。PERCLOS（遅い）とマイクロスリープ（手遅れ）の間を埋める早期兆候。
   # 覚醒時の閉眼は 0.1〜0.15 秒、眠気が進むと 0.3 秒以上に伸び、まぶたの戻りも遅くなる。
   # normal/drowsy の各値は文献の代表値を初期値に置いたもので、収録データで詰めること。
-  blink_dynamics: { weight: 0.8, window_seconds: 60, closed_ratio: 0.6, open_ratio: 0.7, normal_seconds: 0.15, drowsy_seconds: 0.35, normal_reopen: 0.12, drowsy_reopen: 0.30, min_blinks: 3 }
+  # しきい値は実測で引いた (acted_long / 1状態90秒 / 窓が単一ラベルで満たされる区間)。
+  # 文献値 (0.15/0.35, 0.12/0.30) は専用アイトラッカー前提で、この構成では
+  # 覚醒時の中央値 233ms が「通常 150ms」を超えてしまい、普通に瞬きしている
+  # だけで 0.92 まで上がっていた。
+  #   閉眼   覚醒 中央値 233ms / 眠気 中央値 1667ms
+  #   戻り   覚醒 中央値 167ms / 眠気 中央値  300ms
+  # 覚醒の 75%点を「通常」、眠気の中央値付近を「眠い」に置く。
+  blink_dynamics: { weight: 0.8, window_seconds: 60, closed_ratio: 0.6, open_ratio: 0.7, normal_seconds: 0.40, drowsy_seconds: 1.20, normal_reopen: 0.20, drowsy_reopen: 0.45, min_blinks: 3 }
   # うなずき（落ちて戻す往復）。head_down は持続を条件にするのでこの動きを拾えない。
   nodding:     { weight: 0.8, window_seconds: 60, amplitude_deg: 8, max_seconds: 2.5, nods_drowsy: 3 }
   # 運転者を見失っている状態。他の cue は顔なしで黙るので、この1本だけが声を出せる。
