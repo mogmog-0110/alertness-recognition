@@ -6,7 +6,10 @@
   :root { color-scheme: dark; }
   html, body { margin: 0; height: 100%; background: #000; color: #fff;
                font: 16px/1.5 -apple-system, sans-serif; }
-  #view { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  /* 表示だけ鏡像にする。CSS の transform は drawImage に効かないので、
+     送る映像は反転しないまま (PC 側 webcam と同じ幾何を保つ)。 */
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
+          transform: scaleX(-1); }
   #panel { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px;
            background: rgba(0,0,0,.55); backdrop-filter: blur(8px); }
   #message { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
