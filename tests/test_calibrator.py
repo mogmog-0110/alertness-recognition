@@ -64,3 +64,35 @@ def test_calibration_gives_up_waiting_at_the_cap():
     baselines = cal.finalize().baselines
     assert "ear" in baselines
     assert "hr_bpm" not in baselines  # 出なかったので基準も無い（推論側は present で扱う）
+
+
+def test_the_pose_baseline_survives_the_180_boundary() -> None:
+    """±180 を跨いだ標本から正しい基準を作る。
+
+    solvePnP の pitch は正面を向いていても 180 度付近に居座り、標本が +179 と
+    -179 に割れる。普通の中央値だと 0 付近になり、以後ずっと「下を向いている」と
+    判定され続ける。
+    """
+    calibrator = StatisticalCalibrator(duration_seconds=1.0, fps=30.0, warmup_seconds=0.0)
+    for i, pitch in enumerate((179.5, -179.5, 178.0, -178.5, 179.0)):
+        calibrator.collect(
+            make_observation(
+                Features(values={"pitch": pitch, "yaw": 0.0, "roll": 0.0}, timestamp=i / 30.0)
+            )
+        )
+    profile = calibrator.finalize()
+    # 180 付近であること。0 付近になっていたら壊れている。
+    assert abs(abs(profile.head_pose_neutral.pitch) - 180.0) < 3.0
+
+
+def test_the_pose_baseline_is_unchanged_away_from_the_boundary() -> None:
+    # 境界から離れていれば、これまでと同じ値になる。
+    calibrator = StatisticalCalibrator(duration_seconds=1.0, fps=30.0, warmup_seconds=0.0)
+    for i, pitch in enumerate((10.0, 12.0, 11.0, 9.0, 13.0)):
+        calibrator.collect(
+            make_observation(
+                Features(values={"pitch": pitch, "yaw": 0.0, "roll": 0.0}, timestamp=i / 30.0)
+            )
+        )
+    profile = calibrator.finalize()
+    assert abs(profile.head_pose_neutral.pitch - 11.0) < 0.5

@@ -68,14 +68,38 @@ class StatisticalCalibrator:
             ear_open_baseline=self._median("ear", 0.3),
             mar_neutral=self._median("mar", 0.0),
             head_pose_neutral=Pose(
-                self._median("pitch", 0.0),
-                self._median("yaw", 0.0),
-                self._median("roll", 0.0),
+                self._angle_median("pitch", 0.0),
+                self._angle_median("yaw", 0.0),
+                self._angle_median("roll", 0.0),
             ),
             gaze_center=(self._median("gaze_x", 0.5), self._median("gaze_y", 0.5)),
             face_scale=self._median("face_scale", 1.0),
             baselines=self._baselines(),
         )
+
+    def _angle_median(self, key: str, default: float) -> float:
+        """角度の中央値。±180 を跨いでも壊れないように円周上で取る。
+
+        角度は循環量なので、そのまま median を取ってはいけない。solvePnP が返す
+        pitch は正面を向いていても ±180 付近に居座ることがあり（3D モデルの Y 軸が
+        上向きで画像の Y 軸が下向きなので 180 度のオフセットが乗る）、標本が
+        +179 と -179 に割れる。普通の中央値だと基準が 0 付近になり、以後ずっと
+        「下を向いている」と判定され続ける（実測: 正面を向いたまま pitch_rel が
+        22 度ずれ、head_down が立ちっぱなしになった）。
+
+        単位ベクトルの平均で中心を出し、その周りへ畳んでから中央値を取る。
+        平均ではなく中央値なのは、キャリブ中の一瞬の検出ミスに引きずられない
+        ようにするため（元の実装の意図をそのまま保つ）。
+        """
+        values = [f.get(key) for f in self._samples]
+        values = [v for v in values if not math.isnan(v)]
+        if not values:
+            return default
+        radians = np.radians(values)
+        center = math.atan2(float(np.mean(np.sin(radians))), float(np.mean(np.cos(radians))))
+        offsets = np.angle(np.exp(1j * (radians - center)))
+        median = center + float(np.median(offsets))
+        return float((math.degrees(median) + 180.0) % 360.0 - 180.0)
 
     def _median(self, key: str, default: float) -> float:
         values = [f.get(key) for f in self._samples]
