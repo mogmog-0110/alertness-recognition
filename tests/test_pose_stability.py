@@ -60,3 +60,22 @@ def test_the_limit_scales_with_elapsed_time() -> None:
     poses = [Pose(0.0, 0.0, 0.0), Pose(120.0, 0.0, 0.0)]
     values = _pitches(poses, [0.0, 1.0])  # 1 秒あれば 120 度は動ける
     assert values[1] == 120.0
+
+
+def test_the_filter_always_recovers() -> None:
+    """捨て続けても必ず追いつく。
+
+    捨てるたびに時刻を進めると許容量が 1 フレーム分のまま増えず、いったん
+    実際の姿勢から離れると永久に古い値を返し続ける (実測: yaw が 54.3 度で
+    固まり、覚醒フレームの 44% がその値になった)。
+    """
+    # 0 度から 120 度へ跳んだあと、その姿勢が続く。
+    poses = [Pose(0.0, 0.0, 0.0)] + [Pose(120.0, 0.0, 0.0)] * 30
+    stamps = [i / 30 for i in range(len(poses))]
+    values = _pitches(poses, stamps)
+
+    assert values[1] == 0.0, "跳んだ直後は捨てる"
+    # 300 度/秒なので 120 度には 0.4 秒 = 12 フレームで許容が届く。
+    assert values[-1] == 120.0, "続いていれば必ず追いつく"
+    caught = next(i for i, v in enumerate(values) if v == 120.0)
+    assert caught <= 15, f"追いつくまで {caught} フレームは長すぎる"

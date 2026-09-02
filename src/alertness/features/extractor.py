@@ -93,8 +93,12 @@ class FaceFeatureExtractor:
         飛びでも、うなずき判定は「8 度以上の上下動」を数えるので偽のうなずきが
         立ち、60 秒の窓のあいだ眠気が最大に張り付く。
 
-        直前の姿勢と比べて速すぎる変化は、その場の推定を捨てて直前を使う。
-        本当に速い動きは連続するので、次のフレームで追いつく。
+        直前に**採用した**姿勢と、その時刻からの経過で許容量を決める。捨てても
+        時刻を進めないので、許容量は時間とともに広がり、必ず復帰する。
+
+        捨てるたびに時刻を進めると許容量が 1 フレーム分のまま増えず、いったん
+        実際の姿勢から離れると永久に古い値を返し続ける (実測: yaw が 54.3 度で
+        固まり、覚醒フレームの 44% がその値になって head_turn が誤発火した)。
         """
         pose = estimate_pose(landmarks)
         previous, previous_at = self._last_pose
@@ -109,8 +113,9 @@ class FaceFeatureExtractor:
             abs(_wrap_deg(pose.roll - previous.roll)),
         )
         if moved > limit:
-            # 捨てる。時刻は進めて、次のフレームで追いつけるようにする。
-            self._last_pose = (previous, timestamp)
+            # 捨てる。**時刻は進めない**。次のフレームでは許容量が広がるので、
+            # 本当にその姿勢なら数フレームで追いつく。300 度/秒なら 0.5 秒後に
+            # 150 度まで許すので、どんな姿勢からでも必ず復帰する。
             return previous
         self._last_pose = (pose, timestamp)
         return pose

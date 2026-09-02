@@ -105,10 +105,34 @@ STRESS_PROMPTS = (
     ),
 )
 
+# 窓を使う cue の較正用。1 状態を最長の窓 (blink_dynamics の 60 秒) より長く
+# 保持する。
+#
+# acted は 1 状態 12 秒だが、eye_closure は 30 秒、blink_dynamics は 60 秒の窓で
+# 判定する。12 秒ブロックを並べると、どの時点の窓も複数のラベルを含んでしまい、
+# これらの cue は原理的にラベルを分離できない。実測でも、窓を使わない blink /
+# yawn は覚醒と眠気をきれいに分けた (0.00 対 0.51) のに、窓を使う eye_closure /
+# blink_dynamics はほとんど差が出なかった (0.36 対 0.43、0.63 対 0.70)。
+#
+# 較正はこちらで録ったデータで行う。acted は動作確認や短い試行に使う。
+LONG_PROMPTS = tuple(
+    Prompt(
+        label=p.label,
+        title=p.title,
+        instruction=p.instruction,
+        hold_seconds=90.0,
+        ready_seconds=8.0,
+    )
+    for p in DEFAULT_PROMPTS
+)
+
+
 # --protocol で選ぶ指示セット。
 PROTOCOLS = {
     "acted": DEFAULT_PROMPTS,  # 演技でよい軸（眠気・注意逸脱）
     "stress": STRESS_PROMPTS,  # 実際に負荷をかけて誘発する軸（ストレス）
+    # 窓を使う cue の較正用。1 状態 90 秒で、最長の窓 (60 秒) を単一ラベルで満たせる。
+    "acted_long": LONG_PROMPTS,
 }
 
 
