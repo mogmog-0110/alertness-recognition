@@ -29,6 +29,13 @@ source:
   # iphone:
   #   host: 0.0.0.0     # 全インタフェースで待つ。特定の NIC に絞るなら IP を書く
   #   port: 8765
+  #   # ブラウザ版 (アプリを入れずに Safari で使う) を出すときだけ設定する。
+  #   # iOS Safari は HTTPS でないとカメラを許可しないので証明書が要る。
+  #   #   python scripts/make_cert.py --host <このPCのIP>
+  #   # ページと WebSocket を同じポートで出すので、端末で承認する証明書は 1 つ。
+  #   certfile: certs/cert.pem
+  #   keyfile: certs/key.pem
+  #   web_root: web
   # type: mjpeg         # スマートフォンをカメラにする。PC は手元の開発機のまま、
   # url: http://192.168.1.10:8080/video   # 車に載せるのは端末だけになる。
   #                     # Android の「IP Webcam」等の既製アプリがこの形式を出すので、
@@ -146,7 +153,12 @@ cues:
     weight: 1.0
     capacity_seconds: 2.0
     latency_seconds: 0.1        # ゾーン無効時、および away ゾーンの猶予
-    gaze_on_threshold: 0.035
+    # 実測で引いた値。0.035 は覚醒時の中央値 0.041 より低く、前を向いていても
+    # 半分以上が「前方から外れた」と判定され、注意残高が減り続けていた
+    # (覚醒フレームの 52% に警告)。覚醒の 75%点 0.063 を採る。
+    # よそ見時の中央値は 0.087 なので分離できる。
+    # 0.063 以降は誤警報が頭打ちで、上げても見逃しが増えるだけだった。
+    gaze_on_threshold: 0.063
     on_target_yaw_deg: 25
     refill_rate: 1.0
     # 前方の向きを走行中の分布の最頻値から推定する。起動時キャリブは、カメラを注視

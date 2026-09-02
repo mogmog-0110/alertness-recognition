@@ -80,7 +80,13 @@ def build_source(
         from .sources.iphone_ws import IPhoneLink, IPhoneSource
 
         net = source.get("iphone", {})
-        link = IPhoneLink(net.get("host", "0.0.0.0"), int(net.get("port", 8765)))
+        link = IPhoneLink(
+            net.get("host", "0.0.0.0"),
+            int(net.get("port", 8765)),
+            certfile=net.get("certfile", ""),
+            keyfile=net.get("keyfile", ""),
+            web_root=net.get("web_root", ""),
+        )
         link.wait_ready()  # 番号が使用中なら、繋がらない症状ではなくここで分かる
         return IPhoneSource(link)
     if stype == "mjpeg":

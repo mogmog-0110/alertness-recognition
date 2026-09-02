@@ -1,0 +1,153 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Alertness</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff;
+               font: 16px/1.5 -apple-system, sans-serif; }
+  /* 表示だけ鏡像にする。CSS の transform は drawImage に効かないので、
+     送る映像は反転しないまま (PC 側 webcam と同じ幾何を保つ)。 */
+  #view { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
+          transform: scaleX(-1); }
+  #panel { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px;
+           background: rgba(0,0,0,.55); backdrop-filter: blur(8px); }
+  #message { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  #message.alert { color: #ff4d4d; }
+  #status { font-size: 12px; color: #aaa; font-variant-numeric: tabular-nums; }
+  #dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         background: #777; margin-right: 6px; vertical-align: middle; }
+  #dot.on { background: #3ddc6b; }
+  #start { position: fixed; inset: 0; display: grid; place-content: center;
+           background: #000; font-size: 20px; }
+  button { font: inherit; padding: 12px 20px; }
+</style>
+
+<video id="view" playsinline muted></video>
+<div id="panel">
+  <p id="message"></p>
+  <div id="status"><span id="dot"></span><span id="state">未接続</span> · <span id="sent">0</span></div>
+</div>
+<div id="start"><button id="go">はじめる</button></div>
+
+<script>
+// 端末はカメラとスピーカーだけ。判定は PC 側が行う。
+// 送信: [8 byte 撮影時刻 (float64 LE)][JPEG]   受信: 判定 JSON
+const FPS = 30, QUALITY = 0.7, WIDTH = 1280, HEIGHT = 720;
+
+const video = document.getElementById("view");
+const canvas = document.createElement("canvas");
+const ctx = canvas.getContext("2d", { alpha: false });
+const els = {
+  message: document.getElementById("message"),
+  state: document.getElementById("state"),
+  sent: document.getElementById("sent"),
+  dot: document.getElementById("dot"),
+};
+
+let socket = null, sent = 0, inFlight = 0, lastSent = 0, held = 0, audio = null;
+
+function setState(text, on) {
+  els.state.textContent = text;
+  els.dot.classList.toggle("on", !!on);
+}
+
+// 音は一度ユーザー操作を経ないと鳴らせない (iOS の自動再生制限)。
+// 開始ボタンで AudioContext を作っておく。
+function beep(level) {
+  if (!audio) return;
+  const osc = audio.createOscillator(), gain = audio.createGain();
+  osc.frequency.value = level === "high" ? 880 : 660;
+  const now = audio.currentTime, dur = level === "high" ? 0.45 : 0.25;
+  gain.gain.setValueAtTime(0, now);
+  gain.gain.linearRampToValueAtTime(0.3, now + 0.02);   // 端で切るとプツッと鳴る
+  gain.gain.linearRampToValueAtTime(0, now + dur);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(now); osc.stop(now + dur);
+}
+
+function show(result) {
+  // 出すのは警告とキャリブの案内だけ。正常時は何も出さない。
+  if (result.phase === "calibrating") {
+    els.message.className = "";
+    els.message.textContent = "基準を測っています — 前方を見てください";
+    return;
+  }
+  if (result.phase === "guided" && result.guided) {
+    els.message.className = "";
+    const g = result.guided;
+    els.message.textContent =
+      (g.step === "hold" ? "記録中: " : "つぎ: ") + (g.title || "") +
+      (g.remaining != null ? `  ${Math.round(g.remaining)}s` : "");
+    return;
+  }
+  if (result.alert) {
+    els.message.className = "alert";
+    els.message.textContent = result.message || "警告";
+    beep(result.level || "medium");
+    held = performance.now();
+    return;
+  }
+  // 警告は 4 秒保持する。判定は毎秒 30 回返るので、素直に消すと見えない。
+  if (performance.now() - held > 4000) {
+    els.message.className = "";
+    els.message.textContent = "";
+  }
+}
+
+function connect() {
+  setState("接続しています", false);
+  socket = new WebSocket(`wss://${location.host}/ws`);
+  socket.binaryType = "arraybuffer";
+  socket.onopen = () => setState("接続中", true);
+  socket.onclose = () => { setState("切断 — 再接続します", false); setTimeout(connect, 2000); };
+  socket.onerror = () => setState("接続できません", false);
+  socket.onmessage = (e) => {
+    try { show(JSON.parse(e.data)); } catch (_) {}
+  };
+}
+
+function sendFrame(now) {
+  if (!socket || socket.readyState !== 1) return;
+  if (now - lastSent < 1000 / FPS) return;
+  if (inFlight >= 3) return;          // 詰まったら捨てる。溜めると遅延が積む
+  lastSent = now;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  inFlight++;
+  canvas.toBlob(async (blob) => {
+    inFlight--;
+    if (!blob || !socket || socket.readyState !== 1) return;
+    const jpeg = await blob.arrayBuffer();
+    const out = new ArrayBuffer(8 + jpeg.byteLength);
+    // 撮影時刻。到着時刻で代用すると、詰まった分だけ生理指標が歪む。
+    new DataView(out).setFloat64(0, now / 1000, true);
+    new Uint8Array(out, 8).set(new Uint8Array(jpeg));
+    socket.send(out);
+    els.sent.textContent = ++sent;
+  }, "image/jpeg", QUALITY);
+}
+
+function loop(now) { sendFrame(now); requestAnimationFrame(loop); }
+
+document.getElementById("go").onclick = async () => {
+  audio = new (window.AudioContext || window.webkitAudioContext)();
+  await audio.resume();
+  try {
+    // 鏡像にしない。PC 側の webcam と同じ幾何にする。
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: WIDTH }, height: { ideal: HEIGHT },
+               frameRate: { ideal: FPS } },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    canvas.width = video.videoWidth || WIDTH;
+    canvas.height = video.videoHeight || HEIGHT;
+    document.getElementById("start").remove();
+    connect();
+    requestAnimationFrame(loop);
+  } catch (err) {
+    els.message.textContent = "カメラを使えません: " + err;
+  }
+};
+</script>
