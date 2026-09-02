@@ -1,10 +1,11 @@
 @echo off
-REM ブラウザ版のデモを起動する。引数は要らない。
-REM IP の検出も証明書の作成も自動で行い、端末で開く URL を表示する。
+REM Start the browser demo. No arguments needed.
+REM It detects this PC's LAN address, prepares the certificate, and prints
+REM the URL to open on the phone.
 setlocal
 cd /d "%~dp0.."
 if not exist ".venv" (
-  echo [demo] .venv がありません。先に scripts\setup.bat を実行してください。
+  echo [demo] .venv not found. Run scripts\setup.bat first.
   exit /b 1
 )
 call .venv\Scripts\activate.bat
