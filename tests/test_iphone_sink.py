@@ -161,3 +161,29 @@ def test_running_phase_is_stated_explicitly() -> None:
     sink = IPhoneSink(link)
     payload = _emit(sink, _assessment(Dimension(name="眠気", score=0.1, level=Level.NONE)))
     assert payload["phase"] == "running"
+
+
+def test_guided_prompts_reach_the_device() -> None:
+    # 運転者は PC の窓を見られない。指示が届かなければ演技のしようがない。
+    link = _FakeLink()
+    sink = IPhoneSink(link)
+    obs = make_observation(Features(values={}, timestamp=9.0))
+
+    sink.guiding(obs, "眠い状態", "・まぶたを半分まで下げる", "hold", 4.25, 0.5)
+
+    (payload,) = link.sent
+    assert payload["phase"] == "guided"
+    assert payload["guided"]["title"] == "眠い状態"
+    assert payload["guided"]["step"] == "hold"
+    assert payload["guided"]["remaining"] == 4.2  # 小数第1位まで
+    assert payload["guided"]["progress"] == 0.5
+    # 指示は判定ではないので、警告を鳴らしてはいけない。
+    assert payload["alert"] is False
+
+
+def test_guided_progress_is_clamped() -> None:
+    link = _FakeLink()
+    sink = IPhoneSink(link)
+    obs = make_observation(Features(values={}, timestamp=0.0))
+    sink.guiding(obs, "t", "i", "ready", 1.0, 1.7)
+    assert link.sent[0]["guided"]["progress"] == 1.0
