@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import struct
 import threading
 import time
@@ -45,10 +46,16 @@ class IPhoneLink:
         host: str = "0.0.0.0",  # noqa: S104 - 同じ Wi-Fi の端末から繋ぐので全 IF で待つ
         port: int = 8765,
         max_message_bytes: int = _MAX_MESSAGE_BYTES,
+        certfile: str = "",
+        keyfile: str = "",
+        web_root: str = "",
     ) -> None:
         self._host = host
         self._requested_port = port
         self._max_message_bytes = max_message_bytes
+        self._certfile = certfile
+        self._keyfile = keyfile
+        self._web_root = os.path.abspath(web_root) if web_root else None
         self._latest = LatestFrame()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._finished: asyncio.Event | None = None
@@ -129,16 +136,71 @@ class IPhoneLink:
 
         self._loop = asyncio.get_running_loop()
         self._finished = asyncio.Event()
+        context = self._ssl_context()
         async with serve(
             self._on_connect,
             self._host,
             self._requested_port,
             max_size=self._max_message_bytes,
+            ssl=context,
+            process_request=self._serve_page,
         ) as server:
             self._port = server.sockets[0].getsockname()[1]
             self._ready.set()
-            print(f"[iphone] 待ち受け ws://{self._host}:{self._port}")
+            scheme = "wss" if context else "ws"
+            print(f"[iphone] 待ち受け {scheme}://{self._host}:{self._port}")
+            if self._web_root:
+                page = "https" if context else "http"
+                print(f"[iphone] ブラウザ版: {page}://<このPCのIP>:{self._port}/")
             await self._finished.wait()
+
+    def _ssl_context(self):
+        """証明書があれば TLS で待ち受ける。
+
+        iOS Safari は HTTPS でないとカメラを許可しない。ページと WebSocket を
+        同じポートで出すので、端末側で承認する証明書は 1 つで済む。
+        """
+        if not (self._certfile and self._keyfile):
+            return None
+        import ssl
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(self._certfile, self._keyfile)
+        return context
+
+    def _serve_page(self, connection, request):
+        """WebSocket でないリクエストにはページを返す。
+
+        別ポートで配ると証明書の承認が 2 回要るうえ、片方だけ承認して繋がらない
+        という分かりにくい失敗をする。同じポートに寄せる。
+        """
+        if self._web_root is None:
+            return None
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            return None  # WebSocket はそのまま通す
+
+        import os
+        from http import HTTPStatus
+
+        name = request.path.split("?", 1)[0].lstrip("/") or "index.html"
+        # ディレクトリを抜けられないようにする。
+        path = os.path.normpath(os.path.join(self._web_root, name))
+        if not path.startswith(os.path.abspath(self._web_root)) or not os.path.isfile(path):
+            return connection.respond(HTTPStatus.NOT_FOUND, "not found\n")
+
+        from websockets.datastructures import Headers
+        from websockets.http11 import Response
+
+        with open(path, "rb") as handle:
+            body = handle.read()
+        content_type = (
+            "text/html; charset=utf-8" if path.endswith(".html") else "application/octet-stream"
+        )
+        headers = Headers()
+        headers["Content-Type"] = content_type
+        headers["Content-Length"] = str(len(body))
+        headers["Cache-Control"] = "no-store"
+        return Response(HTTPStatus.OK.value, HTTPStatus.OK.phrase, headers, body)
 
     async def _on_connect(self, ws) -> None:
         from websockets.exceptions import ConnectionClosed

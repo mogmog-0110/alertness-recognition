@@ -29,6 +29,13 @@ source:
   # iphone:
   #   host: 0.0.0.0     # 全インタフェースで待つ。特定の NIC に絞るなら IP を書く
   #   port: 8765
+  #   # ブラウザ版 (アプリを入れずに Safari で使う) を出すときだけ設定する。
+  #   # iOS Safari は HTTPS でないとカメラを許可しないので証明書が要る。
+  #   #   python scripts/make_cert.py --host <このPCのIP>
+  #   # ページと WebSocket を同じポートで出すので、端末で承認する証明書は 1 つ。
+  #   certfile: certs/cert.pem
+  #   keyfile: certs/key.pem
+  #   web_root: web
   # type: mjpeg         # スマートフォンをカメラにする。PC は手元の開発機のまま、
   # url: http://192.168.1.10:8080/video   # 車に載せるのは端末だけになる。
   #                     # Android の「IP Webcam」等の既製アプリがこの形式を出すので、

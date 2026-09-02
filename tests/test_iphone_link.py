@@ -261,3 +261,47 @@ def test_broken_commands_are_ignored() -> None:
         assert link.take_commands() == []
     finally:
         link.close()
+
+
+def test_the_page_is_served_on_the_websocket_port(tmp_path) -> None:
+    """ページと WebSocket を同じポートで出す。
+
+    別ポートで配ると端末で承認する証明書が 2 つになり、片方だけ承認して
+    繋がらないという分かりにくい失敗をする。
+    """
+    root = tmp_path / "web"
+    root.mkdir()
+    (root / "index.html").write_text("<p>hello</p>", encoding="utf-8")
+
+    link = IPhoneLink(port=0, web_root=str(root))
+    try:
+        link.wait_ready()
+        import urllib.request
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{link.port}/") as res:
+            assert res.status == 200
+            assert b"hello" in res.read()
+    finally:
+        link.close()
+
+
+def test_the_page_server_refuses_paths_outside_the_root(tmp_path) -> None:
+    # ../ でリポジトリの中身を読み出せてはいけない。
+    root = tmp_path / "web"
+    root.mkdir()
+    (root / "index.html").write_text("ok", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+
+    link = IPhoneLink(port=0, web_root=str(root))
+    try:
+        link.wait_ready()
+        import urllib.error
+        import urllib.request
+
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{link.port}/../secret.txt")
+            raise AssertionError("読み出せてしまった")
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
+    finally:
+        link.close()
