@@ -148,6 +148,7 @@ class App:
                 if frame is None:
                     break
                 self._watchdog.beat()
+                self._handle_remote_commands()
                 with profiling.stage("observe"):
                     obs = self._observe(frame)
                 if obs is None:
@@ -268,15 +269,30 @@ class App:
         except cv2.error:
             pass
         if key == _KEY_RECALIBRATE:
-            # 別人に替わった可能性があるので、本人前提で育てた基準と履歴も捨てる。
-            self._pipeline.reset_state()
-            self._calibrator = factory.build_calibrator(self._config)
-            self._calibrating = True
+            self._recalibrate()
         elif key in self._key_labels:
             # 数字キーで録画ラベルを切り替える。
             self._labels.value = self._key_labels[key]
             print(f"[label] {self._labels.value or '(none)'}")
         return False
+
+    def _handle_remote_commands(self) -> None:
+        """端末から届いた操作を反映する。source が対応していなければ何もしない。"""
+        take = getattr(self._source, "take_commands", None)
+        if not callable(take):
+            return
+        for command in take():
+            if command == "recalibrate":
+                print("[iphone] 端末から再キャリブを受け取りました。")
+                self._recalibrate()
+            else:
+                print(f"[iphone] 未知の命令を無視しました: {command}")
+
+    def _recalibrate(self) -> None:
+        # 別人に替わった可能性があるので、本人前提で育てた基準と履歴も捨てる。
+        self._pipeline.reset_state()
+        self._calibrator = factory.build_calibrator(self._config)
+        self._calibrating = True
 
     def _close(self) -> None:
         self._watchdog.close()

@@ -237,3 +237,27 @@ def test_a_webcam_run_gets_no_device_sink():
     config = {"feedback": {"window": False}, "assessment": {"dimensions": []}}
     sinks = factory.build_sinks(config, False, LabelState(""), source=None)
     assert sinks._sinks == []
+
+
+def test_a_text_message_becomes_a_command() -> None:
+    # 端末は PC の画面もキーボードも触れないので、基準の取り直しは
+    # この経路でしか頼めない。
+    link = IPhoneLink(port=0)
+    try:
+        link._accept('{"command": "recalibrate"}')
+        assert link.take_commands() == ["recalibrate"]
+        # 読んだ分は消える。同じ命令を二度実行してはいけない。
+        assert link.take_commands() == []
+    finally:
+        link.close()
+
+
+def test_broken_commands_are_ignored() -> None:
+    # 壊れたテキストで待ち受けごと落ちてはいけない。
+    link = IPhoneLink(port=0)
+    try:
+        for text in ("", "{", "[]", '{"no_command": 1}', '{"command": 3}'):
+            link._accept(text)
+        assert link.take_commands() == []
+    finally:
+        link.close()
