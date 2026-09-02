@@ -29,8 +29,8 @@ source:
   # iphone:
   #   host: 0.0.0.0     # 全インタフェースで待つ。特定の NIC に絞るなら IP を書く
   #   port: 8765
-  #   # ブラウザ版 (アプリを入れずに Safari で使う) を出すときだけ設定する。
-  #   # iOS Safari は HTTPS でないとカメラを許可しないので証明書が要る。
+  #   # ブラウザ版 (アプリを入れずにブラウザで使う) を出すときだけ設定する。
+  #   # ブラウザは HTTPS でないとカメラを許可しないので証明書が要る。
   #   #   python scripts/make_cert.py --host <このPCのIP>
   #   # ページと WebSocket を同じポートで出すので、端末で承認する証明書は 1 つ。
   #   certfile: certs/cert.pem

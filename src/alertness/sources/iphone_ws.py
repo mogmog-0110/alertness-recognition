@@ -155,13 +155,13 @@ class IPhoneLink:
 
                 page = "https" if context else "http"
                 address = self._address or local_ip()
-                print(f"[iphone] 端末の Safari で開く: {page}://{address}:{self._port}/")
+                print(f"[iphone] 端末のブラウザで開く: {page}://{address}:{self._port}/")
             await self._finished.wait()
 
     def _ssl_context(self):
         """証明書を今の IP に合わせて用意し、TLS で待ち受ける。
 
-        iOS Safari は HTTPS でないとカメラを許可しない。ページと WebSocket を
+        ブラウザは HTTPS でないとカメラを許可しない。ページと WebSocket を
         同じポートで出すので、端末側で承認する証明書は 1 つで済む。
 
         IP は DHCP で変わる。証明書の IP が現在と違うと iOS は接続を拒み、

@@ -14,6 +14,12 @@
            background: rgba(0,0,0,.55); backdrop-filter: blur(8px); }
   #message { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
   #message.alert { color: #ff4d4d; }
+  #reason { font-size: 12px; color: #aaa; margin: 0 0 4px; }
+  #spin { display: none; width: 14px; height: 14px; margin-right: 8px;
+          vertical-align: -2px; border: 2px solid #666; border-top-color: #fff;
+          border-radius: 50%; animation: turn .8s linear infinite; }
+  #spin.on { display: inline-block; }
+  @keyframes turn { to { transform: rotate(360deg); } }
   #status { font-size: 12px; color: #aaa; font-variant-numeric: tabular-nums; }
   #dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
          background: #777; margin-right: 6px; vertical-align: middle; }
@@ -21,12 +27,17 @@
   #start { position: fixed; inset: 0; display: grid; place-content: center;
            background: #000; font-size: 20px; }
   button { font: inherit; padding: 12px 20px; }
+  #recal { float: right; font-size: 12px; padding: 3px 10px; }
 </style>
 
 <video id="view" playsinline muted></video>
 <div id="panel">
-  <p id="message"></p>
-  <div id="status"><span id="dot"></span><span id="state">未接続</span> · <span id="sent">0</span></div>
+  <p id="message"><span id="spin"></span><span id="text"></span></p>
+  <p id="reason"></p>
+  <div id="status">
+    <span id="dot"></span><span id="state">未接続</span> · <span id="sent">0</span>
+    <button id="recal" type="button">測り直す</button>
+  </div>
 </div>
 <div id="start"><button id="go">はじめる</button></div>
 
@@ -40,12 +51,24 @@ const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d", { alpha: false });
 const els = {
   message: document.getElementById("message"),
+  text: document.getElementById("text"),
+  reason: document.getElementById("reason"),
+  spin: document.getElementById("spin"),
   state: document.getElementById("state"),
   sent: document.getElementById("sent"),
   dot: document.getElementById("dot"),
 };
 
 let socket = null, sent = 0, inFlight = 0, lastSent = 0, held = 0, audio = null;
+// 接続を張り直しただけか、利用者が繋いだ新しいセッションか。
+// 基準はその人・その姿勢・その明るさに属するので、新しいセッションなら測り直す。
+// 通信が切れて自力で張り直したときは測り直さない（測っている間は正面を見て
+// いる保証がなく、運転中に基準が飛ぶ）。
+let calibrateOnOpen = true, retryDelay = 1000;
+
+function recalibrate() {
+  if (socket && socket.readyState === 1) socket.send(JSON.stringify({ command: "recalibrate" }));
+}
 
 function setState(text, on) {
   els.state.textContent = text;
@@ -66,41 +89,81 @@ function beep(level) {
   osc.start(now); osc.stop(now + dur);
 }
 
+// 振動は対応している端末だけ。iOS は Vibration API に対応していないので鳴らない。
+// 対応の有無で分岐するだけにして、非対応を理由に機能ごと落とさない。
+function buzz(level) {
+  if (!navigator.vibrate) return;
+  navigator.vibrate(level === "high" ? [200, 80, 200] : [120]);
+}
+
+// 画面が消えると撮影ごと止まる。デモ中に消えないよう保持する。
+// 対応していない環境では黙って何もしない。
+let wakeLock = null;
+async function keepAwake() {
+  try {
+    if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
+  } catch (_) { /* 取れなくても続行する */ }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !wakeLock) keepAwake();
+});
+
 function show(result) {
-  // 出すのは警告とキャリブの案内だけ。正常時は何も出さない。
+  // 出すのは警告とキャリブ・収録の案内だけ。正常時は何も出さない。
+  // 常時何か出していると、赤い警告が出たときの変化に気づきにくい。
+  const set = (text, opts = {}) => {
+    els.text.textContent = text;
+    els.message.className = opts.alert ? "alert" : "";
+    els.spin.classList.toggle("on", !!opts.spin);
+    els.reason.textContent = opts.reason || "";
+  };
+
   if (result.phase === "calibrating") {
-    els.message.className = "";
-    els.message.textContent = "基準を測っています — 前方を見てください";
+    // 進捗はバーで見せない。「幾何が揃った割合」と「心拍が出た割合」の
+    // 小さい方で、心拍が出るまで 0 のまま最後に跳ねる量なので。
+    set("基準を測っています — 前方を見てください", {
+      spin: true,
+      reason: result.waiting_for === "hr_bpm" ? "心拍の基準を待っています（最大 30 秒）" : "",
+    });
     return;
   }
   if (result.phase === "guided" && result.guided) {
-    els.message.className = "";
     const g = result.guided;
-    els.message.textContent =
-      (g.step === "hold" ? "記録中: " : "つぎ: ") + (g.title || "") +
-      (g.remaining != null ? `  ${Math.round(g.remaining)}s` : "");
+    const head = g.step === "hold" ? "記録中" : "つぎ";
+    const left = g.remaining != null ? `  ${Math.round(g.remaining)}s` : "";
+    set(`${head}: ${g.title || ""}${left}`, { reason: g.instruction || "" });
     return;
   }
   if (result.alert) {
-    els.message.className = "alert";
-    els.message.textContent = result.message || "警告";
+    set(result.message || "警告", { alert: true, reason: result.dimension || "" });
     beep(result.level || "medium");
+    buzz(result.level || "medium");
     held = performance.now();
     return;
   }
   // 警告は 4 秒保持する。判定は毎秒 30 回返るので、素直に消すと見えない。
-  if (performance.now() - held > 4000) {
-    els.message.className = "";
-    els.message.textContent = "";
-  }
+  if (performance.now() - held > 4000) set("");
 }
 
 function connect() {
   setState("接続しています", false);
   socket = new WebSocket(`wss://${location.host}/ws`);
   socket.binaryType = "arraybuffer";
-  socket.onopen = () => setState("接続中", true);
-  socket.onclose = () => { setState("切断 — 再接続します", false); setTimeout(connect, 2000); };
+  socket.onopen = () => {
+    setState("接続中", true);
+    retryDelay = 1000;   // 繋がったので次に落ちたら即座に試す
+    if (!calibrateOnOpen) return;
+    calibrateOnOpen = false;
+    // すぐには測らない。繋がった直後はまだ端末を構え直している最中で、
+    // その姿勢が基準になると以後ずっと「下を向いている」扱いになる。
+    setTimeout(recalibrate, 4000);
+  };
+  socket.onclose = () => {
+    setState("切断 — 再接続します", false);
+    // 相手が落ちている間ずっと同じ間隔で叩いても意味が無い。倍々で最大 10 秒。
+    setTimeout(connect, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 10000);
+  };
   socket.onerror = () => setState("接続できません", false);
   socket.onmessage = (e) => {
     try { show(JSON.parse(e.data)); } catch (_) {}
@@ -129,6 +192,8 @@ function sendFrame(now) {
 
 function loop(now) { sendFrame(now); requestAnimationFrame(loop); }
 
+document.getElementById("recal").onclick = recalibrate;
+
 document.getElementById("go").onclick = async () => {
   audio = new (window.AudioContext || window.webkitAudioContext)();
   await audio.resume();
@@ -144,6 +209,7 @@ document.getElementById("go").onclick = async () => {
     canvas.width = video.videoWidth || WIDTH;
     canvas.height = video.videoHeight || HEIGHT;
     document.getElementById("start").remove();
+    keepAwake();
     connect();
     requestAnimationFrame(loop);
   } catch (err) {

@@ -305,3 +305,24 @@ def test_the_page_server_refuses_paths_outside_the_root(tmp_path) -> None:
             assert error.code == 404
     finally:
         link.close()
+
+
+def test_commands_survive_alongside_frames() -> None:
+    # 端末は映像と命令を同じ接続で混ぜて送る。片方が他方を壊してはいけない。
+    link = IPhoneLink(port=0)
+    try:
+        header = struct.pack("<d", 1.0)
+        import cv2
+        import numpy as np
+
+        image = np.zeros((8, 8, 3), np.uint8)
+        ok, buf = cv2.imencode(".jpg", image)
+        assert ok
+        link._accept(header + buf.tobytes())
+        link._accept('{"command": "recalibrate"}')
+        link._accept(header + buf.tobytes())
+
+        assert link.take_commands() == ["recalibrate"]
+        assert link.take_newer_than(0) is not None, "命令を挟んでも映像は届く"
+    finally:
+        link.close()

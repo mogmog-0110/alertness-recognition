@@ -50,12 +50,24 @@ scripts\run.bat --record                   :: 判定の裏で特徴量CSVを run
 PC は開発機のまま手元に置き、車に載せるのは端末だけ、という構成。端末が撮った映像を
 WebSocket で受け、判定結果を同じ接続で返す。端末側は別リポジトリ（`alertness-ios`）。
 
-1. `pip install -e .[iphone]`（`websockets` が要る）
+1. `pip install -e .[iphone]`（`websockets` と `cryptography` が要る）
 2. `config\default.yaml` の `source.type` を `iphone` にする（既定ポート 8765）
 3. Windows のファイアウォールで 8765 の受信を許可する。ここで詰まると
    「端末が繋がらない」という症状になるが、原因が見えにくい
 4. `scripts\run.bat` を起動してから、端末に `ws://<PCのIPアドレス>:8765` を入れる
    （`ipconfig` の IPv4 アドレス。同じ Wi-Fi にいること）
+
+### アプリを入れずにブラウザで使う
+
+端末にアプリを入れずに、ブラウザで URL を開くだけで同じことができる。iPhone でも
+Android でも動く（振動だけは対応端末のみ）。
+
+```
+python -m alertness.demo
+```
+
+引数は要らない。IP の検出も証明書の作成も自分でやり、端末で開く URL を表示する。
+手順と困ったときの対処は [docs/BROWSER.md](docs/BROWSER.md)。
 
 端末が手元に無くても、経路だけなら確かめられる。
 

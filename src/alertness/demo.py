@@ -33,10 +33,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print("=" * 56)
-    print("  端末の Safari で次を開いてください")
+    print("  端末のブラウザで次を開いてください")
     print(f"      https://{address}:8765/")
     print()
-    print("  1. 証明書の警告 →「詳細を表示」→「このWebサイトを閲覧」")
+    print("  1. 証明書の警告を承認する（「詳細」→「アクセスする」系）")
     print("  2. 「はじめる」→ カメラを許可")
     print("  3. 4 秒後に基準の測定が始まります。前方を見てください")
     print()

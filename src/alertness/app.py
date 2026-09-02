@@ -286,7 +286,12 @@ class App:
         return False
 
     def _handle_remote_commands(self) -> None:
-        """端末から届いた操作を反映する。source が対応していなければ何もしない。"""
+        """端末から届いた操作を反映する。source が対応していなければ何もしない。
+
+        フレームの処理ループから呼ぶので、**映像が流れていない間は処理されない**。
+        端末はカメラを開始してから接続するので実害は無いが、映像を止めた状態で
+        命令だけ送っても効かない。
+        """
         take = getattr(self._source, "take_commands", None)
         if not callable(take):
             return
