@@ -46,6 +46,10 @@
 // 端末はカメラとスピーカーだけ。判定は PC 側が行う。
 // 送信: [8 byte 撮影時刻 (float64 LE)][JPEG]   受信: 判定 JSON
 const FPS = 30, QUALITY = 0.7, WIDTH = 1280, HEIGHT = 720;
+// サーバ側の Wi-Fi が落ちると、ブラウザの WebSocket は TCP タイムアウトまで
+// OPEN のまま残ることがある。判定とは別の応答で半開きを短時間で見つける。
+const HEARTBEAT_INTERVAL_MS = 1000, HEARTBEAT_TIMEOUT_MS = 4000;
+const CONNECT_TIMEOUT_MS = 5000;
 
 const video = document.getElementById("view");
 const canvas = document.createElement("canvas");
@@ -61,6 +65,7 @@ const els = {
 };
 
 let socket = null, sent = 0, inFlight = 0, lastSent = 0, audio = null;
+let lastReply = 0, reconnectTimer = null;
 // 警告が始まった時刻と、最後に警告が来た時刻。消すのは後者を基準にするが、
 // 一瞬で消えると読めないので前者から最低表示時間も守る。
 let alertFrom = 0, alertLast = 0;
@@ -175,10 +180,32 @@ function show(result) {
 }
 
 function connect() {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   setState("接続しています", false);
-  socket = new WebSocket(`wss://${location.host}/ws`);
-  socket.binaryType = "arraybuffer";
-  socket.onopen = () => {
+  const ws = new WebSocket(`wss://${location.host}/ws`);
+  socket = ws;
+  const openTimer = setTimeout(() => {
+    // 接続試行中に Wi-Fi が切れていると、OPEN にも close にも進まず長く
+    // 止まるブラウザがある。試行自体にも期限を設けて次の接続へ進む。
+    if (socket !== ws || ws.readyState === WebSocket.OPEN) return;
+    socket = null;
+    setState("切断 — 再接続します", false);
+    try { ws.close(); } catch (_) {}
+    connect();
+  }, CONNECT_TIMEOUT_MS);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => {
+    if (socket !== ws) {
+      // 期限切れ後に古い接続試行だけが成功すると、サーバーの返送先を奪う。
+      // 現在の接続でなければ直ちに閉じる。
+      try { ws.close(); } catch (_) {}
+      return;
+    }
+    clearTimeout(openTimer);
+    lastReply = performance.now();
     setState("接続中", true);
     retryDelay = 1000;   // 繋がったので次に落ちたら即座に試す
     if (!calibrateOnOpen) return;
@@ -187,17 +214,50 @@ function connect() {
     // その姿勢が基準になると以後ずっと「下を向いている」扱いになる。
     setTimeout(recalibrate, 4000);
   };
-  socket.onclose = () => {
+  ws.onclose = () => {
+    if (socket !== ws) return;  // 置き換え済みの古い接続からの通知
+    clearTimeout(openTimer);
+    socket = null;
     setState("切断 — 再接続します", false);
     // 相手が落ちている間ずっと同じ間隔で叩いても意味が無い。倍々で最大 10 秒。
-    setTimeout(connect, retryDelay);
+    reconnectTimer = setTimeout(connect, retryDelay);
     retryDelay = Math.min(retryDelay * 2, 10000);
   };
-  socket.onerror = () => setState("接続できません", false);
-  socket.onmessage = (e) => {
-    try { show(JSON.parse(e.data)); } catch (_) {}
+  ws.onerror = () => {
+    if (socket === ws) setState("接続できません", false);
+  };
+  ws.onmessage = (e) => {
+    if (socket !== ws) return;
+    lastReply = performance.now();
+    try {
+      const result = JSON.parse(e.data);
+      if (result.type !== "pong") show(result);
+    } catch (_) {}
   };
 }
+
+function checkConnection() {
+  const ws = socket;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const now = performance.now();
+  if (now - lastReply > HEARTBEAT_TIMEOUT_MS) {
+    // close イベント自体が半開きでは遅れるため、先に現接続から切り離して
+    // 新しいソケットを作る。古い onclose は socket !== ws となり無視される。
+    socket = null;
+    setState("切断 — 再接続します", false);
+    try { ws.close(); } catch (_) {}
+    connect();
+    return;
+  }
+  try {
+    ws.send(JSON.stringify({ type: "ping" }));
+  } catch (_) {
+    socket = null;
+    try { ws.close(); } catch (_) {}
+    connect();
+  }
+}
+setInterval(checkConnection, HEARTBEAT_INTERVAL_MS);
 
 function sendFrame(now) {
   if (!socket || socket.readyState !== 1) return;
