@@ -19,6 +19,7 @@ class Prompt:
     instruction: str  # 具体的な指示（複数行可）
     hold_seconds: float = 12.0  # 保持してもらう時間
     ready_seconds: float = 3.0  # 次の状態へ移る準備時間
+    key: str = ""  # 端末側で翻訳するための、表示文言に依存しない識別子
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class GuidedStep:
     phase: str  # "ready" / "hold" / "done"
     remaining: float
     progress: float  # 全体進捗 0..1
+    prompt_key: str = ""
 
 
 # 既定の指示。目・口・頭の状態まで具体的に書く。
@@ -42,6 +44,7 @@ DEFAULT_PROMPTS = (
             "・自然なまばたき\n"
             "・口は閉じる／頭はまっすぐ"
         ),
+        key="acted_awake",
     ),
     Prompt(
         label="drowsiness",
@@ -52,6 +55,7 @@ DEFAULT_PROMPTS = (
             "・ときどき大きくあくび\n"
             "・頭を少し前に下げる"
         ),
+        key="acted_drowsiness",
     ),
     Prompt(
         label="distraction",
@@ -62,6 +66,7 @@ DEFAULT_PROMPTS = (
             "・スマホを見るように下や横を向く\n"
             "・画面を見続けない"
         ),
+        key="acted_distraction",
     ),
 )
 
@@ -81,6 +86,7 @@ STRESS_PROMPTS = (
             "・普通に呼吸する。話さない\n"
             "・頭を動かさない（rPPG が壊れます）"
         ),
+        key="stress_rest",
         hold_seconds=120.0,
         ready_seconds=5.0,
     ),
@@ -93,6 +99,7 @@ STRESS_PROMPTS = (
             "・記録者は正誤を見ています\n"
             "・頭は動かさない"
         ),
+        key="stress_arithmetic",
         hold_seconds=120.0,
         ready_seconds=5.0,
     ),
@@ -100,6 +107,7 @@ STRESS_PROMPTS = (
         label="awake",
         title="回復（安静に戻す）",
         instruction="・楽にして画面を見る\n・普通に呼吸する。話さない\n・頭を動かさない",
+        key="stress_recovery",
         hold_seconds=120.0,
         ready_seconds=5.0,
     ),
@@ -120,6 +128,7 @@ LONG_PROMPTS = tuple(
         label=p.label,
         title=p.title,
         instruction=p.instruction,
+        key=p.key,
         hold_seconds=90.0,
         ready_seconds=8.0,
     )
@@ -154,13 +163,19 @@ class GuidedSession:
             self._start = now
         elapsed = now - self._start
         if elapsed >= self._total:
-            return GuidedStep("完了", "おつかれさまでした", "", "done", 0.0, 1.0)
+            return GuidedStep("完了", "おつかれさまでした", "", "done", 0.0, 1.0, "done")
 
         for start, end, phase, prompt in self._segments:
             if start <= elapsed < end:
                 label = prompt.label if phase == "hold" else ""
                 title = prompt.title if phase == "hold" else f"次: {prompt.title}"
                 return GuidedStep(
-                    title, prompt.instruction, label, phase, end - elapsed, elapsed / self._total
+                    title,
+                    prompt.instruction,
+                    label,
+                    phase,
+                    end - elapsed,
+                    elapsed / self._total,
+                    prompt.key,
                 )
-        return GuidedStep("完了", "おつかれさまでした", "", "done", 0.0, 1.0)
+        return GuidedStep("完了", "おつかれさまでした", "", "done", 0.0, 1.0, "done")

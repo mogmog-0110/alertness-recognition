@@ -1,4 +1,6 @@
 <!doctype html>
+<html lang="ja">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Alertness</title>
@@ -14,7 +16,7 @@
            background: rgba(0,0,0,.55); backdrop-filter: blur(8px); }
   #message { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
   #message.alert { color: #ff4d4d; }
-  #reason { font-size: 12px; color: #aaa; margin: 0 0 4px; }
+  #reason { font-size: 12px; color: #aaa; margin: 0 0 4px; white-space: pre-line; }
   #spin { display: none; width: 14px; height: 14px; margin-right: 8px;
           vertical-align: -2px; border: 2px solid #666; border-top-color: #fff;
           border-radius: 50%; animation: turn .8s linear infinite; }
@@ -25,11 +27,22 @@
          background: #777; margin-right: 6px; vertical-align: middle; }
   #dot.on { background: #3ddc6b; }
   #start { position: fixed; inset: 0; display: grid; place-content: center;
-           background: #000; font-size: 20px; }
-  button { font: inherit; padding: 12px 20px; }
+           background: #000; font-size: 20px; padding: 24px; }
+  #start-box { display: grid; justify-items: stretch; gap: 20px; width: min(280px, 80vw); }
+  #language-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+                     border: 1px solid #777; border-radius: 8px; overflow: hidden; }
+  #language-switch button { border: 0; border-radius: 0; background: #151515; color: #aaa; }
+  #language-switch button + button { border-left: 1px solid #777; }
+  #language-switch button[aria-pressed="true"] { background: #fff; color: #000;
+                                                  font-weight: 700; }
+  #start-error { color: #ff7070; font-size: 14px; margin: 0; text-align: center; }
+  button { font: inherit; padding: 12px 20px; cursor: pointer; }
+  button:focus-visible { outline: 3px solid #6ab7ff; outline-offset: 2px; }
+  button:disabled { cursor: wait; opacity: .65; }
   #recal, #mute { float: right; font-size: 12px; padding: 3px 10px; margin-left: 6px; }
 </style>
-
+</head>
+<body>
 <video id="view" playsinline muted></video>
 <div id="panel">
   <p id="message"><span id="spin"></span><span id="text"></span></p>
@@ -40,7 +53,91 @@
     <button id="recal" type="button">測り直す</button>
   </div>
 </div>
-<div id="start"><button id="go">はじめる</button></div>
+<div id="start">
+  <div id="start-box">
+    <div id="language-switch" role="group" aria-label="表示言語">
+      <button type="button" data-locale="ja" aria-pressed="true">JP</button>
+      <button type="button" data-locale="en" aria-pressed="false">EN</button>
+    </div>
+    <button id="go" type="button">はじめる</button>
+    <p id="start-error" role="alert" hidden></p>
+  </div>
+</div>
+
+<script id="translations" type="application/json">
+{
+  "ja": {
+    "languageLabel": "表示言語",
+    "start": "はじめる",
+    "disconnected": "未接続",
+    "connecting": "接続しています",
+    "connected": "接続中",
+    "reconnecting": "切断 — 再接続します",
+    "connectionError": "接続できません",
+    "mute": "音を消す",
+    "unmute": "音を出す",
+    "recalibrate": "測り直す",
+    "calibrating": "基準を測っています — 前方を見てください",
+    "heartRateWait": "心拍の基準を待っています（最大 30 秒）",
+    "recording": "記録中",
+    "next": "つぎ",
+    "cameraError": "カメラを使えません",
+    "warning": "警告",
+    "alertHigh": "{dimension}が強いです",
+    "alertMedium": "{dimension}の兆候があります",
+    "dimensions": {
+      "drowsiness": "眠気",
+      "distraction": "脇見",
+      "inattentive": "注意散漫",
+      "stress": "緊張"
+    },
+    "prompts": {
+      "acted_awake": {"title": "覚醒（ふつうの状態）", "instruction": "・普段の運転で見る方向（前方）を見る\n・目はしっかり開ける\n・自然なまばたき\n・口は閉じる／頭はまっすぐ"},
+      "acted_drowsiness": {"title": "眠い状態", "instruction": "・まぶたを半分くらいまで下げる\n・ゆっくり長めにまばたき\n・ときどき大きくあくび\n・頭を少し前に下げる"},
+      "acted_distraction": {"title": "注意散漫（よそ見）", "instruction": "・視線を画面の外（左右）へ\n・顔も左右に向ける\n・スマホを見るように下や横を向く\n・画面を見続けない"},
+      "stress_rest": {"title": "安静（基準）", "instruction": "・楽な姿勢で、普段の運転で見る方向を見る\n・普通に呼吸する。話さない\n・頭を動かさない（rPPG が壊れます）"},
+      "stress_arithmetic": {"title": "暗算（時間を計っています）", "instruction": "・1022 から 13 を引き続け、声に出す\n・できるだけ速く。間違えたら 1022 からやり直し\n・記録者は正誤を見ています\n・頭は動かさない"},
+      "stress_recovery": {"title": "回復（安静に戻す）", "instruction": "・楽にして画面を見る\n・普通に呼吸する。話さない\n・頭を動かさない"},
+      "done": {"title": "完了", "instruction": "おつかれさまでした"}
+    }
+  },
+  "en": {
+    "languageLabel": "Display language",
+    "start": "Start",
+    "disconnected": "Disconnected",
+    "connecting": "Connecting…",
+    "connected": "Connected",
+    "reconnecting": "Disconnected — reconnecting…",
+    "connectionError": "Unable to connect",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "recalibrate": "Recalibrate",
+    "calibrating": "Calibrating — look straight ahead",
+    "heartRateWait": "Waiting for a heart-rate baseline (up to 30 seconds)",
+    "recording": "Recording",
+    "next": "Next",
+    "cameraError": "Unable to access the camera",
+    "warning": "Warning",
+    "alertHigh": "High {dimension} detected",
+    "alertMedium": "Signs of {dimension} detected",
+    "dimensions": {
+      "drowsiness": "drowsiness",
+      "distraction": "distraction",
+      "inattentive": "inattention",
+      "stress": "stress"
+    },
+    "prompts": {
+      "acted_awake": {"title": "Alert (normal state)", "instruction": "• Look in your normal driving direction (straight ahead)\n• Keep your eyes fully open\n• Blink naturally\n• Keep your mouth closed and your head straight"},
+      "acted_drowsiness": {"title": "Drowsy state", "instruction": "• Lower your eyelids about halfway\n• Blink slowly and keep your eyes closed longer\n• Yawn widely from time to time\n• Lower your head slightly forward"},
+      "acted_distraction": {"title": "Distracted (looking away)", "instruction": "• Look outside the screen to the left or right\n• Turn your face left or right as well\n• Look down or sideways as if checking a phone\n• Do not keep looking at the screen"},
+      "stress_rest": {"title": "Rest (baseline)", "instruction": "• Sit comfortably and look in your normal driving direction\n• Breathe normally and do not speak\n• Keep your head still (movement disrupts rPPG)"},
+      "stress_arithmetic": {"title": "Mental arithmetic (timed)", "instruction": "• Repeatedly subtract 13 from 1022 and say each answer aloud\n• Work as quickly as possible; if you make a mistake, restart from 1022\n• The recorder is checking your answers\n• Keep your head still"},
+      "stress_recovery": {"title": "Recovery (return to rest)", "instruction": "• Relax and look at the screen\n• Breathe normally and do not speak\n• Keep your head still"},
+      "done": {"title": "Complete", "instruction": "Thank you for your effort"}
+    }
+  }
+}
+</script>
 
 <script>
 // 端末はカメラとスピーカーだけ。判定は PC 側が行う。
@@ -51,21 +148,25 @@ const FPS = 30, QUALITY = 0.7, WIDTH = 1280, HEIGHT = 720;
 const HEARTBEAT_INTERVAL_MS = 1000, HEARTBEAT_TIMEOUT_MS = 4000;
 const CONNECT_TIMEOUT_MS = 5000;
 
+const translations = JSON.parse(document.getElementById("translations").textContent);
+let locale = "ja";
+
 const video = document.getElementById("view");
 const canvas = document.createElement("canvas");
 const ctx = canvas.getContext("2d", { alpha: false });
 const els = {
-  message: document.getElementById("message"),
-  text: document.getElementById("text"),
-  reason: document.getElementById("reason"),
-  spin: document.getElementById("spin"),
-  state: document.getElementById("state"),
-  sent: document.getElementById("sent"),
-  dot: document.getElementById("dot"),
+  message: document.getElementById("message"), text: document.getElementById("text"),
+  reason: document.getElementById("reason"), spin: document.getElementById("spin"),
+  state: document.getElementById("state"), sent: document.getElementById("sent"),
+  dot: document.getElementById("dot"), mute: document.getElementById("mute"),
+  recal: document.getElementById("recal"), go: document.getElementById("go"),
+  startError: document.getElementById("start-error"),
+  languageSwitch: document.getElementById("language-switch"),
 };
 
 let socket = null, sent = 0, inFlight = 0, lastSent = 0, audio = null;
 let lastReply = 0, reconnectTimer = null;
+let stateKey = "disconnected", startErrorName = "";
 // 警告が始まった時刻と、最後に警告が来た時刻。消すのは後者を基準にするが、
 // 一瞬で消えると読めないので前者から最低表示時間も守る。
 let alertFrom = 0, alertLast = 0;
@@ -81,12 +182,34 @@ const BEEP_GAP_MS = 3000;
 const CLEAR_DELAY_MS = 700;    // 判定の途切れを跨ぐぶん
 const MIN_VISIBLE_MS = 1500;   // 一瞬の警告でも読める長さ
 
+function copy(template, values = {}) {
+  return template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? "");
+}
+
+function renderLocale() {
+  const words = translations[locale];
+  document.documentElement.lang = locale;
+  els.languageSwitch.setAttribute("aria-label", words.languageLabel);
+  els.languageSwitch.querySelectorAll("button").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.locale === locale));
+  });
+  els.go.textContent = words.start;
+  els.mute.textContent = muted ? words.unmute : words.mute;
+  els.recal.textContent = words.recalibrate;
+  els.state.textContent = words[stateKey];
+  if (startErrorName) {
+    els.startError.textContent = `${words.cameraError} (${startErrorName})`;
+    els.startError.hidden = false;
+  }
+}
+
 function recalibrate() {
   if (socket && socket.readyState === 1) socket.send(JSON.stringify({ command: "recalibrate" }));
 }
 
-function setState(text, on) {
-  els.state.textContent = text;
+function setState(key, on) {
+  stateKey = key;
+  els.state.textContent = translations[locale][key];
   els.dot.classList.toggle("on", !!on);
 }
 
@@ -143,26 +266,41 @@ function show(result) {
     els.spin.classList.toggle("on", !!opts.spin);
     els.reason.textContent = opts.reason || "";
   };
+  const words = translations[locale];
 
   if (result.phase === "calibrating") {
     // 進捗はバーで見せない。「幾何が揃った割合」と「心拍が出た割合」の
     // 小さい方で、心拍が出るまで 0 のまま最後に跳ねる量なので。
-    set("基準を測っています — 前方を見てください", {
+    set(words.calibrating, {
       spin: true,
-      reason: result.waiting_for === "hr_bpm" ? "心拍の基準を待っています（最大 30 秒）" : "",
+      reason: result.waiting_for === "hr_bpm" ? words.heartRateWait : "",
     });
     return;
   }
   if (result.phase === "guided" && result.guided) {
     const g = result.guided;
-    const head = g.step === "hold" ? "記録中" : "つぎ";
+    const prompt = words.prompts[g.prompt_key];
+    const title = prompt ? prompt.title : (g.title || "");
+    const instruction = prompt ? prompt.instruction : (g.instruction || "");
+    if (g.step === "done") {
+      set(title, { reason: instruction });
+      return;
+    }
+    const head = g.step === "hold" ? words.recording : words.next;
     const left = g.remaining != null ? `  ${Math.round(g.remaining)}s` : "";
-    set(`${head}: ${g.title || ""}${left}`, { reason: g.instruction || "" });
+    set(`${head}: ${title}${left}`, { reason: instruction });
     return;
   }
   const now = performance.now();
   if (result.alert) {
-    set(result.message || "警告", { alert: true, reason: result.dimension || "" });
+    const key = result.dimension_key || "";
+    const dimension = words.dimensions[key] || key || result.dimension || "";
+    let message = result.message || words.warning;
+    if (key) {
+      const template = result.level === "high" ? words.alertHigh : words.alertMedium;
+      message = copy(template, { dimension });
+    }
+    set(message, { alert: true, reason: dimension });
     beep(result.level || "medium");
     buzz(result.level || "medium");
     if (now - alertLast > CLEAR_DELAY_MS) alertFrom = now;
@@ -184,7 +322,7 @@ function connect() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  setState("接続しています", false);
+  setState("connecting", false);
   const ws = new WebSocket(`wss://${location.host}/ws`);
   socket = ws;
   const openTimer = setTimeout(() => {
@@ -192,7 +330,7 @@ function connect() {
     // 止まるブラウザがある。試行自体にも期限を設けて次の接続へ進む。
     if (socket !== ws || ws.readyState === WebSocket.OPEN) return;
     socket = null;
-    setState("切断 — 再接続します", false);
+    setState("reconnecting", false);
     try { ws.close(); } catch (_) {}
     connect();
   }, CONNECT_TIMEOUT_MS);
@@ -206,7 +344,7 @@ function connect() {
     }
     clearTimeout(openTimer);
     lastReply = performance.now();
-    setState("接続中", true);
+    setState("connected", true);
     retryDelay = 1000;   // 繋がったので次に落ちたら即座に試す
     if (!calibrateOnOpen) return;
     calibrateOnOpen = false;
@@ -218,13 +356,13 @@ function connect() {
     if (socket !== ws) return;  // 置き換え済みの古い接続からの通知
     clearTimeout(openTimer);
     socket = null;
-    setState("切断 — 再接続します", false);
+    setState("reconnecting", false);
     // 相手が落ちている間ずっと同じ間隔で叩いても意味が無い。倍々で最大 10 秒。
     reconnectTimer = setTimeout(connect, retryDelay);
     retryDelay = Math.min(retryDelay * 2, 10000);
   };
   ws.onerror = () => {
-    if (socket === ws) setState("接続できません", false);
+    if (socket === ws) setState("connectionError", false);
   };
   ws.onmessage = (e) => {
     if (socket !== ws) return;
@@ -281,16 +419,25 @@ function sendFrame(now) {
 
 function loop(now) { sendFrame(now); requestAnimationFrame(loop); }
 
-document.getElementById("recal").onclick = recalibrate;
-document.getElementById("mute").onclick = (e) => {
+els.languageSwitch.querySelectorAll("button").forEach((button) => {
+  button.onclick = () => {
+    locale = button.dataset.locale;
+    renderLocale();
+  };
+});
+els.recal.onclick = recalibrate;
+els.mute.onclick = () => {
   muted = !muted;
-  e.target.textContent = muted ? "音を出す" : "音を消す";
+  renderLocale();
 };
 
-document.getElementById("go").onclick = async () => {
-  audio = new (window.AudioContext || window.webkitAudioContext)();
-  await audio.resume();
+els.go.onclick = async () => {
+  els.go.disabled = true;
+  startErrorName = "";
+  els.startError.hidden = true;
   try {
+    audio = new (window.AudioContext || window.webkitAudioContext)();
+    await audio.resume();
     // 鏡像にしない。PC 側の webcam と同じ幾何にする。
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "user", width: { ideal: WIDTH }, height: { ideal: HEIGHT },
@@ -306,7 +453,13 @@ document.getElementById("go").onclick = async () => {
     connect();
     requestAnimationFrame(loop);
   } catch (err) {
-    els.message.textContent = "カメラを使えません: " + err;
+    startErrorName = err && err.name ? err.name : "Error";
+    els.go.disabled = false;
+    renderLocale();
   }
 };
+
+renderLocale();
 </script>
+</body>
+</html>

@@ -20,6 +20,19 @@ def test_starts_in_ready_without_label():
     assert step.label == ""
 
 
+def test_prompt_key_survives_every_phase():
+    prompts = [Prompt("awake", "覚醒", "...", key="awake_prompt", hold_seconds=1.0)]
+    session = GuidedSession(prompts, rounds=1)
+
+    ready = session.step(0.0)
+    hold = session.step(3.5)
+    done = session.step(10.0)
+
+    assert ready.prompt_key == "awake_prompt"
+    assert hold.prompt_key == "awake_prompt"
+    assert done.prompt_key == "done"
+
+
 def test_hold_assigns_label():
     s = _session()
     s.step(0.0)
@@ -62,3 +75,9 @@ def test_the_long_protocol_covers_the_same_states():
     assert [p.label for p in PROTOCOLS["acted_long"]] == [
         p.label for p in PROTOCOLS["acted"]
     ]
+    assert [p.key for p in PROTOCOLS["acted_long"]] == [p.key for p in PROTOCOLS["acted"]]
+
+
+def test_every_built_in_prompt_has_a_translation_key():
+    for prompts in PROTOCOLS.values():
+        assert all(prompt.key for prompt in prompts)

@@ -18,12 +18,12 @@ class CompositeSink:
 
     def guiding(
         self, obs: Observation, title: str, instruction: str,
-        phase: str, remaining: float, progress: float,
+        phase: str, remaining: float, progress: float, prompt_key: str = "",
     ) -> None:
         for sink in self._sinks:
             notify = getattr(sink, "guiding", None)
             if callable(notify):
-                notify(obs, title, instruction, phase, remaining, progress)
+                notify(obs, title, instruction, phase, remaining, progress, prompt_key)
 
     def calibrating(
         self, obs: Observation, progress: float,
