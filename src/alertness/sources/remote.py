@@ -145,6 +145,11 @@ class RemoteLink:
             max_size=self._max_message_bytes,
             ssl=context,
             process_request=self._serve_page,
+            # サーバ側の Wi-Fi が落ちると TCP が半開きのまま残ることがある。
+            # ライブラリ側でも短い周期で死活確認し、古い接続を回収する。
+            ping_interval=2,
+            ping_timeout=3,
+            close_timeout=1,
         ) as server:
             self._port = server.sockets[0].getsockname()[1]
             self._ready.set()
@@ -223,7 +228,11 @@ class RemoteLink:
         print("[remote] 接続しました。")
         try:
             async for message in ws:
-                self._accept(message)
+                reply = self._accept(message)
+                if reply is not None:
+                    # 判定ループを通さず返す。判定が重い／停止中でも通信経路の
+                    # 生死だけは端末が確かめられなければならない。
+                    await ws.send(json.dumps(reply, ensure_ascii=False))
         except ConnectionClosed:
             pass  # 通信が切れるのは車内では珍しくない。待ち受けは続ける
         finally:
@@ -231,7 +240,7 @@ class RemoteLink:
                 self._ws = None
             print("[remote] 接続が切れました。待ち受けを続けます。")
 
-    def _accept(self, message) -> None:
+    def _accept(self, message) -> dict[str, str] | None:
         """1 メッセージを取り込む。壊れていれば黙って捨てる。
 
         バイナリは映像、テキストは制御命令。取りこぼしは正常な動作（端末は送信が
@@ -239,32 +248,38 @@ class RemoteLink:
         扱わない。流れが止まったこと自体は Watchdog が知らせる。
         """
         if isinstance(message, str):
-            self._accept_command(message)
-            return
+            return self._accept_command(message)
         if not isinstance(message, bytes | bytearray) or len(message) <= _HEADER.size:
-            return
+            return None
         (captured,) = _HEADER.unpack_from(message, 0)
         payload = np.frombuffer(memoryview(message)[_HEADER.size :], dtype=np.uint8)
         image = cv2.imdecode(payload, cv2.IMREAD_COLOR)
         if image is None:
-            return
+            return None
         # 常に最新の 1 枚だけ。遅れて届いた過去のフレームに価値は無い。
         self._latest.put(image, self._stamp(float(captured)))
+        return None
 
-    def _accept_command(self, text: str) -> None:
-        """端末からの制御命令。いまは再キャリブだけ。
+    def _accept_command(self, text: str) -> dict[str, str] | None:
+        """端末からの制御命令または死活確認を受け取る。
 
         端末は運転者の手元にあり、PC の画面もキーボードも触れない。基準を取り直す
         手段が PC 側のキー操作しか無いと、実験のたびにプロセスを落とすことになる。
         """
         try:
-            command = json.loads(text).get("command", "")
+            payload = json.loads(text)
         except (ValueError, AttributeError):
-            return
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("type") == "ping":
+            return {"type": "pong"}
+        command = payload.get("command", "")
         if not isinstance(command, str) or not command:
-            return
+            return None
         with self._commands_lock:
             self._commands.append(command)
+        return None
 
     def take_commands(self) -> list[str]:
         """溜まった命令を取り出す。読んだ分は消える。"""

@@ -57,6 +57,7 @@ def test_the_worst_axis_is_the_one_named():
         ),
     )
     assert payload["dimension"] == "眠気"
+    assert payload["dimension_key"] == "drowsiness"
     assert payload["message"] == "眠気が強いです"
 
 
@@ -106,6 +107,7 @@ def test_the_axis_is_shown_in_the_language_of_the_device():
     sink = RemoteSink(link, names={"drowsiness": "眠気"})
     payload = _emit(sink, _assessment(Dimension("drowsiness", 0.95, Level.HIGH)))
     assert payload["dimension"] == "眠気"
+    assert payload["dimension_key"] == "drowsiness"
     assert payload["message"] == "眠気が強いです"
 
 
@@ -116,6 +118,7 @@ def test_the_warning_name_is_what_the_table_looks_up():
     dim = Dimension("concentration", 0.1, Level.HIGH, alert_score=0.9, alert_name="inattentive")
     payload = _emit(sink, _assessment(dim))
     assert payload["dimension"] == "注意散漫"
+    assert payload["dimension_key"] == "inattentive"
 
 
 def test_an_unmapped_axis_keeps_its_own_name():
@@ -123,6 +126,7 @@ def test_an_unmapped_axis_keeps_its_own_name():
     sink = RemoteSink(link, names={"drowsiness": "眠気"})
     payload = _emit(sink, _assessment(Dimension("fatigue", 0.95, Level.HIGH)))
     assert payload["dimension"] == "fatigue"
+    assert payload["dimension_key"] == "fatigue"
 
 
 def test_calibration_progress_reaches_the_device() -> None:
@@ -169,11 +173,20 @@ def test_guided_prompts_reach_the_device() -> None:
     sink = RemoteSink(link)
     obs = make_observation(Features(values={}, timestamp=9.0))
 
-    sink.guiding(obs, "眠い状態", "・まぶたを半分まで下げる", "hold", 4.25, 0.5)
+    sink.guiding(
+        obs,
+        "眠い状態",
+        "・まぶたを半分まで下げる",
+        "hold",
+        4.25,
+        0.5,
+        "acted_drowsiness",
+    )
 
     (payload,) = link.sent
     assert payload["phase"] == "guided"
     assert payload["guided"]["title"] == "眠い状態"
+    assert payload["guided"]["prompt_key"] == "acted_drowsiness"
     assert payload["guided"]["step"] == "hold"
     assert payload["guided"]["remaining"] == 4.2  # 小数第1位まで
     assert payload["guided"]["progress"] == 0.5
@@ -187,3 +200,4 @@ def test_guided_progress_is_clamped() -> None:
     obs = make_observation(Features(values={}, timestamp=0.0))
     sink.guiding(obs, "t", "i", "ready", 1.0, 1.7)
     assert link.sent[0]["guided"]["progress"] == 1.0
+    assert link.sent[0]["guided"]["prompt_key"] == ""

@@ -142,7 +142,7 @@ class GuidedAware(Protocol):
 
     def guiding(
         self, obs: Observation, title: str, instruction: str,
-        phase: str, remaining: float, progress: float,
+        phase: str, remaining: float, progress: float, prompt_key: str = "",
     ) -> None: ...
 
 

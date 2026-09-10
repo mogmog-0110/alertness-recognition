@@ -188,6 +188,18 @@ def test_sending_without_a_device_is_harmless(link):
     link.send({"level": "none"})  # まだ誰も繋いでいない
 
 
+def test_a_heartbeat_is_answered_without_the_judgment_pipeline(link):
+    # サーバ側 Wi-Fi 断ではブラウザの WebSocket が OPEN のまま残ることがある。
+    # 判定結果を待たず通信だけを確認できれば、端末が半開きを検出して繋ぎ直せる。
+    device = _Device(link.port)
+    device.send(json.dumps({"type": "ping"}))
+    assert _wait(lambda: device.replies)
+    device.close()
+
+    assert device.replies == [{"type": "pong"}]
+    assert link.take_commands() == []
+
+
 def test_a_busy_port_is_reported(link):
     # 「iPhone が繋がらない」という症状は原因が見えにくいので、起動時に分かるようにする。
     second = RemoteLink("127.0.0.1", link.port)

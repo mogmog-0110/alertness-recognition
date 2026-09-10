@@ -53,7 +53,11 @@ class RemoteSink:
         if head is not None:
             # 対応表の見出しは画面に出る名前（alert_name があればそちら）。集中の軸は
             # 「集中」ではなく「注意散漫」として警告するので、警告名の側で引く。
+            # alert_name は設定の対応表にあるときだけ意味キーとして扱う。日本語などの
+            # 表示名を直接持つ既存 Dimension では、安定した内部名 name をキーにする。
+            dimension_key = head.alert_name if head.alert_name in self._names else head.name
             shown = self._names.get(head.display_name, head.display_name)
+            payload["dimension_key"] = dimension_key
             payload["dimension"] = shown
             payload["message"] = self._message(shown, level)
         if self._features:
@@ -62,7 +66,7 @@ class RemoteSink:
 
     def guiding(
         self, obs: Observation, title: str, instruction: str,
-        phase: str, remaining: float, progress: float,
+        phase: str, remaining: float, progress: float, prompt_key: str = "",
     ) -> None:
         """収録の指示を端末へ送る。運転者は PC の窓を見られない。
 
@@ -82,6 +86,7 @@ class RemoteSink:
                     "step": phase,
                     "remaining": round(float(remaining), 1),
                     "progress": max(0.0, min(1.0, float(progress))),
+                    "prompt_key": prompt_key,
                 },
                 "alert": False,
             }

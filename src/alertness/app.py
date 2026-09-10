@@ -224,7 +224,7 @@ class App:
         if callable(guiding):
             guiding(
                 obs, step.title, step.instruction,
-                step.phase, step.remaining, step.progress,
+                step.phase, step.remaining, step.progress, step.prompt_key,
             )
         if self._gui:
             from .feedback import display, overlay
