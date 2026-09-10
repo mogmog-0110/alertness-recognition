@@ -382,7 +382,7 @@ function checkConnection() {
     // close イベント自体が半開きでは遅れるため、先に現接続から切り離して
     // 新しいソケットを作る。古い onclose は socket !== ws となり無視される。
     socket = null;
-    setState("切断 — 再接続します", false);
+    setState("reconnecting", false);
     try { ws.close(); } catch (_) {}
     connect();
     return;

@@ -63,6 +63,17 @@ def test_every_built_in_guided_prompt_can_be_shown_in_both_languages():
 def test_web_client_keeps_legacy_payload_fallbacks():
     page, _ = _page_and_catalog()
 
-    assert 'result.message || words.warning' in page
+    assert "result.message || words.warning" in page
     assert 'g.title || ""' in page
     assert 'g.instruction || ""' in page
+
+
+def test_every_state_label_is_a_catalog_key():
+    # setState はカタログを直に引くので、キーではなく表示文言を渡すと textContent が
+    # undefined になる。日本語表示でも英語表示でも画面に "undefined" と出る。
+    page, catalog = _page_and_catalog()
+    keys = set(re.findall(r'setState\(\s*"([^"]+)"', page))
+
+    assert keys
+    assert keys <= set(catalog["ja"])
+    assert keys <= set(catalog["en"])
