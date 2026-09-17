@@ -28,12 +28,15 @@ if errorlevel 1 exit /b 1
 if not exist "models" mkdir models
 if not exist "models\face_landmarker.task" (
   echo [setup] Downloading FaceLandmarker model ...
-  curl -L -o models\face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+  REM -f keeps an HTTP error page from being saved as the model. The file would
+  REM then exist, so it would never be downloaded again.
+  curl -fL -o models\face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
   if errorlevel 1 (
     echo [setup] Model download failed. Check your network.
+    if exist "models\face_landmarker.task" del "models\face_landmarker.task"
     exit /b 1
   )
 )
 
-echo [setup] Done. Run scripts\run.bat to start.
+echo [setup] Done. Run scripts\demo.bat for the browser demo, or scripts\run.bat for a PC camera.
 endlocal

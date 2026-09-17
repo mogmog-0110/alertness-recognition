@@ -4,80 +4,96 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Alertness</title>
-<style>
-  :root { color-scheme: dark; }
-  html, body { margin: 0; height: 100%; background: #000; color: #fff;
-               font: 16px/1.5 -apple-system, sans-serif; }
-  /* 表示だけ鏡像にする。CSS の transform は drawImage に効かないので、
-     送る映像は反転しないまま (PC 側 webcam と同じ幾何を保つ)。 */
-  #view { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
-          transform: scaleX(-1); }
-  #panel { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px;
-           background: rgba(0,0,0,.55); backdrop-filter: blur(8px); }
-  #message { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
-  #message.alert { color: #ff4d4d; }
-  #reason { font-size: 12px; color: #aaa; margin: 0 0 4px; white-space: pre-line; }
-  #spin { display: none; width: 14px; height: 14px; margin-right: 8px;
-          vertical-align: -2px; border: 2px solid #666; border-top-color: #fff;
-          border-radius: 50%; animation: turn .8s linear infinite; }
-  #spin.on { display: inline-block; }
-  @keyframes turn { to { transform: rotate(360deg); } }
-  #status { font-size: 12px; color: #aaa; font-variant-numeric: tabular-nums; }
-  #dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-         background: #777; margin-right: 6px; vertical-align: middle; }
-  #dot.on { background: #3ddc6b; }
-  #start { position: fixed; inset: 0; display: grid; place-content: center;
-           background: #000; font-size: 20px; padding: 24px; }
-  #start-box { display: grid; justify-items: stretch; gap: 20px; width: min(280px, 80vw); }
-  #language-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 0;
-                     border: 1px solid #777; border-radius: 8px; overflow: hidden; }
-  #language-switch button { border: 0; border-radius: 0; background: #151515; color: #aaa; }
-  #language-switch button + button { border-left: 1px solid #777; }
-  #language-switch button[aria-pressed="true"] { background: #fff; color: #000;
-                                                  font-weight: 700; }
-  #start-error { color: #ff7070; font-size: 14px; margin: 0; text-align: center; }
-  button { font: inherit; padding: 12px 20px; cursor: pointer; }
-  button:focus-visible { outline: 3px solid #6ab7ff; outline-offset: 2px; }
-  button:disabled { cursor: wait; opacity: .65; }
-  #recal, #mute { float: right; font-size: 12px; padding: 3px 10px; margin-left: 6px; }
-</style>
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
 </head>
 <body>
 <video id="view" playsinline muted></video>
+
 <div id="panel">
-  <p id="message"><span id="spin"></span><span id="text"></span></p>
-  <p id="reason"></p>
+  <p id="message" hidden><span id="spin"></span><span id="text"></span></p>
+  <p id="reason" hidden></p>
   <div id="status">
-    <span id="dot"></span><span id="state">未接続</span> · <span id="sent">0</span>
-    <button id="mute" type="button">音を消す</button>
-    <button id="recal" type="button">測り直す</button>
+    <span id="dot"></span><span id="state">未接続</span><span id="sent">0</span>
+    <span id="actions">
+      <button id="recal" type="button">測り直す</button>
+      <button id="mute" type="button">音を消す</button>
+    </span>
   </div>
 </div>
+
+<div id="alert" hidden role="alert">
+  <div id="alert-card">
+    <svg id="alert-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#icon-drowsiness"></use></svg>
+    <p id="alert-title"></p>
+    <p id="alert-reason"></p>
+  </div>
+</div>
+
 <div id="start">
   <div id="start-box">
     <div id="language-switch" role="group" aria-label="表示言語">
       <button type="button" data-locale="ja" aria-pressed="true">JP</button>
       <button type="button" data-locale="en" aria-pressed="false">EN</button>
     </div>
+    <div id="sound-check" role="group" aria-label="警告音を聞く">
+      <p id="sound-check-label">警告音を聞く</p>
+      <button type="button" data-sound="drowsy">眠気</button>
+      <button type="button" data-sound="distracted">脇見</button>
+      <button type="button" data-sound="inattentive">注意散漫</button>
+    </div>
     <button id="go" type="button">はじめる</button>
     <p id="start-error" role="alert" hidden></p>
   </div>
 </div>
+
+<svg hidden>
+  <symbol id="icon-drowsiness" viewBox="0 0 24 24">
+    <path d="M2.5 10c2.6 3.6 5.8 5.4 9.5 5.4s6.9-1.8 9.5-5.4"/>
+    <path d="M6.2 14.2 4.6 16.6M12 15.4v2.9M17.8 14.2l1.6 2.4"/>
+    <path d="M15 3.5h4l-4 4h4"/>
+  </symbol>
+  <symbol id="icon-distraction" viewBox="0 0 24 24">
+    <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/>
+    <circle cx="17" cy="12" r="2.6"/>
+  </symbol>
+  <symbol id="icon-inattentive" viewBox="0 0 24 24">
+    <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/>
+    <circle cx="12" cy="12" r="2.6"/>
+    <path d="M12 1.5v2M4.5 4.5l1.4 1.4M19.5 4.5l-1.4 1.4"/>
+  </symbol>
+  <symbol id="icon-stress" viewBox="0 0 24 24">
+    <path d="M2.5 12.5h4l2.2-5.5 4.2 11 2.4-5.5h6.2"/>
+  </symbol>
+  <symbol id="icon-face" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="8.5"/>
+    <path d="M9 10h.01M15 10h.01M9.5 15.5h5"/>
+    <path d="M3.5 3.5l17 17"/>
+  </symbol>
+</svg>
 
 <script id="translations" type="application/json">
 {
   "ja": {
     "languageLabel": "表示言語",
     "start": "はじめる",
+    "soundCheck": "警告音を聞く",
+    "soundDrowsy": "眠気",
+    "soundDistracted": "脇見",
+    "soundInattentive": "注意散漫",
     "disconnected": "未接続",
     "connecting": "接続しています",
     "connected": "接続中",
     "reconnecting": "切断 — 再接続します",
     "connectionError": "接続できません",
+    "stalled": "判定が届いていません",
     "mute": "音を消す",
     "unmute": "音を出す",
     "recalibrate": "測り直す",
-    "calibrating": "基準を測っています — 前方を見てください",
+    "preparing": "まもなく基準を測ります。端末を固定してください",
+    "calibrating": "基準を測っています。完了の音が鳴るまで前方を見てください",
+    "calibratingFace": "顔が映っていません。カメラの向きを確かめてください",
+    "calibratingSteady": "頭が動いたので測り直しています。前方を見て止まってください",
     "heartRateWait": "心拍の基準を待っています（最大 30 秒）",
     "recording": "記録中",
     "next": "つぎ",
@@ -85,11 +101,30 @@
     "warning": "警告",
     "alertHigh": "{dimension}が強いです",
     "alertMedium": "{dimension}の兆候があります",
+    "faceMissingTitle": "顔が映っていません",
+    "faceMissingHint": "カメラの位置を確かめてください",
     "dimensions": {
       "drowsiness": "眠気",
       "distraction": "脇見",
       "inattentive": "注意散漫",
       "stress": "緊張"
+    },
+    "causes": {
+      "eye_closure": "目を閉じている時間が長い",
+      "blink": "長く目を閉じた",
+      "blink_dynamics": "まばたきが遅い",
+      "nodding": "頭がこくりと揺れている",
+      "yawn": "あくび",
+      "head_down": "うつむいている",
+      "face_absent": "顔が映っていない",
+      "head_turn": "顔が横を向いている",
+      "gaze_off": "視線が前から外れている",
+      "attention_buffer": "前方を見ていない時間が長い",
+      "gaze_scanning": "視線が一点に止まっている",
+      "hr_elevation": "心拍が上がっている",
+      "facial_tension": "表情がこわばっている",
+      "respiration": "呼吸が速い",
+      "blink_rate": "まばたきが増えている"
     },
     "prompts": {
       "acted_awake": {"title": "覚醒（ふつうの状態）", "instruction": "・普段の運転で見る方向（前方）を見る\n・目はしっかり開ける\n・自然なまばたき\n・口は閉じる／頭はまっすぐ"},
@@ -104,15 +139,23 @@
   "en": {
     "languageLabel": "Display language",
     "start": "Start",
+    "soundCheck": "Hear the warning sounds",
+    "soundDrowsy": "Drowsy",
+    "soundDistracted": "Distracted",
+    "soundInattentive": "Inattentive",
     "disconnected": "Disconnected",
     "connecting": "Connecting…",
     "connected": "Connected",
     "reconnecting": "Disconnected — reconnecting…",
     "connectionError": "Unable to connect",
+    "stalled": "No results from the PC",
     "mute": "Mute",
     "unmute": "Unmute",
     "recalibrate": "Recalibrate",
-    "calibrating": "Calibrating — look straight ahead",
+    "preparing": "Calibration starts shortly. Fix the phone in place",
+    "calibrating": "Calibrating. Keep looking ahead until the chime",
+    "calibratingFace": "No face in view. Check the camera angle",
+    "calibratingSteady": "Head moved, restarting. Look ahead and hold still",
     "heartRateWait": "Waiting for a heart-rate baseline (up to 30 seconds)",
     "recording": "Recording",
     "next": "Next",
@@ -120,11 +163,30 @@
     "warning": "Warning",
     "alertHigh": "High {dimension} detected",
     "alertMedium": "Signs of {dimension} detected",
+    "faceMissingTitle": "Face not visible",
+    "faceMissingHint": "Check the camera position",
     "dimensions": {
       "drowsiness": "drowsiness",
       "distraction": "distraction",
       "inattentive": "inattention",
       "stress": "stress"
+    },
+    "causes": {
+      "eye_closure": "Eyes closed for long periods",
+      "blink": "A long eye closure",
+      "blink_dynamics": "Slow blinks",
+      "nodding": "Head nodding",
+      "yawn": "Yawning",
+      "head_down": "Head tilted down",
+      "face_absent": "Face not visible",
+      "head_turn": "Face turned away",
+      "gaze_off": "Eyes off the road",
+      "attention_buffer": "Not looking ahead for too long",
+      "gaze_scanning": "Gaze fixed on one spot",
+      "hr_elevation": "Elevated heart rate",
+      "facial_tension": "Facial tension",
+      "respiration": "Rapid breathing",
+      "blink_rate": "Frequent blinking"
     },
     "prompts": {
       "acted_awake": {"title": "Alert (normal state)", "instruction": "• Look in your normal driving direction (straight ahead)\n• Keep your eyes fully open\n• Blink naturally\n• Keep your mouth closed and your head straight"},
@@ -137,329 +199,6 @@
     }
   }
 }
-</script>
-
-<script>
-// 端末はカメラとスピーカーだけ。判定は PC 側が行う。
-// 送信: [8 byte 撮影時刻 (float64 LE)][JPEG]   受信: 判定 JSON
-const FPS = 30, QUALITY = 0.7, WIDTH = 1280, HEIGHT = 720;
-// サーバ側の Wi-Fi が落ちると、ブラウザの WebSocket は TCP タイムアウトまで
-// OPEN のまま残ることがある。判定とは別の応答で半開きを短時間で見つける。
-const HEARTBEAT_INTERVAL_MS = 1000, HEARTBEAT_TIMEOUT_MS = 4000;
-const CONNECT_TIMEOUT_MS = 5000;
-
-const translations = JSON.parse(document.getElementById("translations").textContent);
-let locale = "ja";
-
-const video = document.getElementById("view");
-const canvas = document.createElement("canvas");
-const ctx = canvas.getContext("2d", { alpha: false });
-const els = {
-  message: document.getElementById("message"), text: document.getElementById("text"),
-  reason: document.getElementById("reason"), spin: document.getElementById("spin"),
-  state: document.getElementById("state"), sent: document.getElementById("sent"),
-  dot: document.getElementById("dot"), mute: document.getElementById("mute"),
-  recal: document.getElementById("recal"), go: document.getElementById("go"),
-  startError: document.getElementById("start-error"),
-  languageSwitch: document.getElementById("language-switch"),
-};
-
-let socket = null, sent = 0, inFlight = 0, lastSent = 0, audio = null;
-let lastReply = 0, reconnectTimer = null;
-let stateKey = "disconnected", startErrorName = "";
-// 警告が始まった時刻と、最後に警告が来た時刻。消すのは後者を基準にするが、
-// 一瞬で消えると読めないので前者から最低表示時間も守る。
-let alertFrom = 0, alertLast = 0;
-// 接続を張り直しただけか、利用者が繋いだ新しいセッションか。
-// 基準はその人・その姿勢・その明るさに属するので、新しいセッションなら測り直す。
-// 通信が切れて自力で張り直したときは測り直さない（測っている間は正面を見て
-// いる保証がなく、運転中に基準が飛ぶ）。
-let calibrateOnOpen = true, retryDelay = 1000, muted = false;
-// 最後に鳴らした時刻。判定は毎秒 20〜30 回返るので、そのたびに鳴らすと
-// 音が数十個重なって鳴り続ける。間隔を空けないと警告として聞き取れない。
-let lastBeep = 0;
-const BEEP_GAP_MS = 3000;
-const CLEAR_DELAY_MS = 700;    // 判定の途切れを跨ぐぶん
-const MIN_VISIBLE_MS = 1500;   // 一瞬の警告でも読める長さ
-
-function copy(template, values = {}) {
-  return template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? "");
-}
-
-function renderLocale() {
-  const words = translations[locale];
-  document.documentElement.lang = locale;
-  els.languageSwitch.setAttribute("aria-label", words.languageLabel);
-  els.languageSwitch.querySelectorAll("button").forEach((button) => {
-    button.setAttribute("aria-pressed", String(button.dataset.locale === locale));
-  });
-  els.go.textContent = words.start;
-  els.mute.textContent = muted ? words.unmute : words.mute;
-  els.recal.textContent = words.recalibrate;
-  els.state.textContent = words[stateKey];
-  if (startErrorName) {
-    els.startError.textContent = `${words.cameraError} (${startErrorName})`;
-    els.startError.hidden = false;
-  }
-}
-
-function recalibrate() {
-  if (socket && socket.readyState === 1) socket.send(JSON.stringify({ command: "recalibrate" }));
-}
-
-function setState(key, on) {
-  stateKey = key;
-  els.state.textContent = translations[locale][key];
-  els.dot.classList.toggle("on", !!on);
-}
-
-// 音は一度ユーザー操作を経ないと鳴らせない (iOS の自動再生制限)。
-// 開始ボタンで AudioContext を作っておく。
-function beep(level) {
-  if (!audio || muted) return;
-  const now = performance.now();
-  if (now - lastBeep < BEEP_GAP_MS) return;
-  lastBeep = now;
-  // 耳に痛くない高さにする。純音は 1〜4kHz が最も刺さるので、そこを避けて
-  // 低めに置く。音量も抑え、立ち上がりと減衰を長めに取って角を落とす。
-  // 警告は「気づかせる」ためのもので、不快さで急かすためのものではない。
-  const times = level === "high" ? 3 : 2;
-  const on = 0.12, gap = 0.13;
-  for (let i = 0; i < times; i++) {
-    const osc = audio.createOscillator(), gain = audio.createGain();
-    osc.type = "sine";
-    osc.frequency.value = level === "high" ? 523 : 392;   // ド / ソ
-    const at = audio.currentTime + i * (on + gap);
-    gain.gain.setValueAtTime(0, at);
-    gain.gain.linearRampToValueAtTime(0.10, at + 0.03);   // ゆっくり立ち上げる
-    gain.gain.linearRampToValueAtTime(0, at + on);        // ゆっくり落とす
-    osc.connect(gain).connect(audio.destination);
-    osc.start(at); osc.stop(at + on + 0.02);
-  }
-}
-
-// 振動は対応している端末だけ。iOS は Vibration API に対応していないので鳴らない。
-// 対応の有無で分岐するだけにして、非対応を理由に機能ごと落とさない。
-function buzz(level) {
-  if (!navigator.vibrate) return;
-  navigator.vibrate(level === "high" ? [200, 80, 200] : [120]);
-}
-
-// 画面が消えると撮影ごと止まる。デモ中に消えないよう保持する。
-// 対応していない環境では黙って何もしない。
-let wakeLock = null;
-async function keepAwake() {
-  try {
-    if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen");
-  } catch (_) { /* 取れなくても続行する */ }
-}
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && !wakeLock) keepAwake();
-});
-
-function show(result) {
-  // 出すのは警告とキャリブ・収録の案内だけ。正常時は何も出さない。
-  // 常時何か出していると、赤い警告が出たときの変化に気づきにくい。
-  const set = (text, opts = {}) => {
-    els.text.textContent = text;
-    els.message.className = opts.alert ? "alert" : "";
-    els.spin.classList.toggle("on", !!opts.spin);
-    els.reason.textContent = opts.reason || "";
-  };
-  const words = translations[locale];
-
-  if (result.phase === "calibrating") {
-    // 進捗はバーで見せない。「幾何が揃った割合」と「心拍が出た割合」の
-    // 小さい方で、心拍が出るまで 0 のまま最後に跳ねる量なので。
-    set(words.calibrating, {
-      spin: true,
-      reason: result.waiting_for === "hr_bpm" ? words.heartRateWait : "",
-    });
-    return;
-  }
-  if (result.phase === "guided" && result.guided) {
-    const g = result.guided;
-    const prompt = words.prompts[g.prompt_key];
-    const title = prompt ? prompt.title : (g.title || "");
-    const instruction = prompt ? prompt.instruction : (g.instruction || "");
-    if (g.step === "done") {
-      set(title, { reason: instruction });
-      return;
-    }
-    const head = g.step === "hold" ? words.recording : words.next;
-    const left = g.remaining != null ? `  ${Math.round(g.remaining)}s` : "";
-    set(`${head}: ${title}${left}`, { reason: instruction });
-    return;
-  }
-  const now = performance.now();
-  if (result.alert) {
-    const key = result.dimension_key || "";
-    const dimension = words.dimensions[key] || key || result.dimension || "";
-    let message = result.message || words.warning;
-    if (key) {
-      const template = result.level === "high" ? words.alertHigh : words.alertMedium;
-      message = copy(template, { dimension });
-    }
-    set(message, { alert: true, reason: dimension });
-    beep(result.level || "medium");
-    buzz(result.level || "medium");
-    if (now - alertLast > CLEAR_DELAY_MS) alertFrom = now;
-    alertLast = now;
-    return;
-  }
-  if (!alertLast) return;
-  // 判定は途切れることがあるので、少しの空白では消さない。ただし基準は
-  // 「最後の警告」なので、危険が去れば表示もすぐ消える。音が止まったのに
-  // 表示だけ残る、という食い違いを作らない。
-  if (now - alertLast < CLEAR_DELAY_MS) return;
-  if (now - alertFrom < MIN_VISIBLE_MS) return;
-  alertLast = 0;
-  set("");
-}
-
-function connect() {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-  setState("connecting", false);
-  const ws = new WebSocket(`wss://${location.host}/ws`);
-  socket = ws;
-  const openTimer = setTimeout(() => {
-    // 接続試行中に Wi-Fi が切れていると、OPEN にも close にも進まず長く
-    // 止まるブラウザがある。試行自体にも期限を設けて次の接続へ進む。
-    if (socket !== ws || ws.readyState === WebSocket.OPEN) return;
-    socket = null;
-    setState("reconnecting", false);
-    try { ws.close(); } catch (_) {}
-    connect();
-  }, CONNECT_TIMEOUT_MS);
-  ws.binaryType = "arraybuffer";
-  ws.onopen = () => {
-    if (socket !== ws) {
-      // 期限切れ後に古い接続試行だけが成功すると、サーバーの返送先を奪う。
-      // 現在の接続でなければ直ちに閉じる。
-      try { ws.close(); } catch (_) {}
-      return;
-    }
-    clearTimeout(openTimer);
-    lastReply = performance.now();
-    setState("connected", true);
-    retryDelay = 1000;   // 繋がったので次に落ちたら即座に試す
-    if (!calibrateOnOpen) return;
-    calibrateOnOpen = false;
-    // すぐには測らない。繋がった直後はまだ端末を構え直している最中で、
-    // その姿勢が基準になると以後ずっと「下を向いている」扱いになる。
-    setTimeout(recalibrate, 4000);
-  };
-  ws.onclose = () => {
-    if (socket !== ws) return;  // 置き換え済みの古い接続からの通知
-    clearTimeout(openTimer);
-    socket = null;
-    setState("reconnecting", false);
-    // 相手が落ちている間ずっと同じ間隔で叩いても意味が無い。倍々で最大 10 秒。
-    reconnectTimer = setTimeout(connect, retryDelay);
-    retryDelay = Math.min(retryDelay * 2, 10000);
-  };
-  ws.onerror = () => {
-    if (socket === ws) setState("connectionError", false);
-  };
-  ws.onmessage = (e) => {
-    if (socket !== ws) return;
-    lastReply = performance.now();
-    try {
-      const result = JSON.parse(e.data);
-      if (result.type !== "pong") show(result);
-    } catch (_) {}
-  };
-}
-
-function checkConnection() {
-  const ws = socket;
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  const now = performance.now();
-  if (now - lastReply > HEARTBEAT_TIMEOUT_MS) {
-    // close イベント自体が半開きでは遅れるため、先に現接続から切り離して
-    // 新しいソケットを作る。古い onclose は socket !== ws となり無視される。
-    socket = null;
-    setState("reconnecting", false);
-    try { ws.close(); } catch (_) {}
-    connect();
-    return;
-  }
-  try {
-    ws.send(JSON.stringify({ type: "ping" }));
-  } catch (_) {
-    socket = null;
-    try { ws.close(); } catch (_) {}
-    connect();
-  }
-}
-setInterval(checkConnection, HEARTBEAT_INTERVAL_MS);
-
-function sendFrame(now) {
-  if (!socket || socket.readyState !== 1) return;
-  if (now - lastSent < 1000 / FPS) return;
-  if (inFlight >= 3) return;          // 詰まったら捨てる。溜めると遅延が積む
-  lastSent = now;
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  inFlight++;
-  canvas.toBlob(async (blob) => {
-    inFlight--;
-    if (!blob || !socket || socket.readyState !== 1) return;
-    const jpeg = await blob.arrayBuffer();
-    const out = new ArrayBuffer(8 + jpeg.byteLength);
-    // 撮影時刻。到着時刻で代用すると、詰まった分だけ生理指標が歪む。
-    new DataView(out).setFloat64(0, now / 1000, true);
-    new Uint8Array(out, 8).set(new Uint8Array(jpeg));
-    socket.send(out);
-    els.sent.textContent = ++sent;
-  }, "image/jpeg", QUALITY);
-}
-
-function loop(now) { sendFrame(now); requestAnimationFrame(loop); }
-
-els.languageSwitch.querySelectorAll("button").forEach((button) => {
-  button.onclick = () => {
-    locale = button.dataset.locale;
-    renderLocale();
-  };
-});
-els.recal.onclick = recalibrate;
-els.mute.onclick = () => {
-  muted = !muted;
-  renderLocale();
-};
-
-els.go.onclick = async () => {
-  els.go.disabled = true;
-  startErrorName = "";
-  els.startError.hidden = true;
-  try {
-    audio = new (window.AudioContext || window.webkitAudioContext)();
-    await audio.resume();
-    // 鏡像にしない。PC 側の webcam と同じ幾何にする。
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: { ideal: WIDTH }, height: { ideal: HEIGHT },
-               frameRate: { ideal: FPS } },
-      audio: false,
-    });
-    video.srcObject = stream;
-    await video.play();
-    canvas.width = video.videoWidth || WIDTH;
-    canvas.height = video.videoHeight || HEIGHT;
-    document.getElementById("start").remove();
-    keepAwake();
-    connect();
-    requestAnimationFrame(loop);
-  } catch (err) {
-    startErrorName = err && err.name ? err.name : "Error";
-    els.go.disabled = false;
-    renderLocale();
-  }
-};
-
-renderLocale();
 </script>
 </body>
 </html>

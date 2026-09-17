@@ -68,10 +68,18 @@ class GazeScanningCue:
 
         values = [v for _, v in pairs]
         prc = time_fraction([t for t, _ in pairs], [v <= self.center_radius for v in values])
-        spread = _stdev(values)
+        spread = _stdev(self._horizontal(obs, values))
         score = min(self._prc_score(prc), self._spread_score(spread))
         detail = f"PRC {prc:.0%} 視線ばらつき {spread:.4f}"
         return CueResult(self.name, self.dimension, score, score < 0.5, detail, None, True)
+
+    def _horizontal(self, obs: Observation, unsigned: list[float]) -> list[float]:
+        # ばらつきは向き付きの gaze_dx で測る。大きさだけの gaze_off では左右へ対称に
+        # 見回すほど両側が同じ値に畳まれ、広く走査しているのに貼りついていると読まれる。
+        # gaze_dx を持たない記録では gaze_off で代用する。
+        _, raw = window_values(obs, "gaze_dx", self.window_seconds, float("nan"))
+        signed = [v for v in raw if not math.isnan(v)]
+        return signed if len(signed) >= 5 else unsigned
 
     def _prc_score(self, prc: float) -> float:
         # 中心域に留まりすぎているほど下げる。healthy 以下なら満点。

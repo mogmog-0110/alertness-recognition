@@ -33,7 +33,14 @@ class Pipeline:
         self._rppg = rppg
 
     def set_profile(self, profile: CalibrationProfile) -> None:
+        """基準を差し替え、古い基準で正規化した履歴を捨てる。
+
+        キャリブ中のフレームも仮の基準で正規化して履歴に積んでいる。残すと確定後も
+        30〜60 秒の窓に居座り、正面を向いているのに PERCLOS やうなずきが立つ。
+        rPPG の窓は基準に依らないので残し、心拍の出始めを待たせない。
+        """
         self._profile = profile
+        self._temporal.reset()
 
     def reset_state(self) -> None:
         """溜め込んだ状態を捨てる。再キャリブレーションの直前に呼ぶ。

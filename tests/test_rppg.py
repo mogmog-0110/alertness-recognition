@@ -135,6 +135,54 @@ def test_augment_noop_when_face_absent():
     assert out is features  # 検出なしなら素通し
 
 
+def _feed_at(times, bpm: float = 72.0, window_seconds: float = 12.0):
+    """指定の時刻列で脈打つ額を流し、HR が出たフレームの (時刻, hr) を返す。"""
+    est = RppgEstimator(fps=30.0, window_seconds=window_seconds, resp_enabled=False)
+    landmarks = _landmarks_with_eyes(64)
+    out = []
+    for i, t in enumerate(times):
+        pulse = math.sin(2.0 * math.pi * bpm / 60.0 * t)
+        rgb = (0.6 + 0.005 * pulse, 0.5 + 0.02 * pulse, 0.4 + 0.003 * pulse)
+        image = np.zeros((64, 64, 3), dtype=float)
+        image[:, :] = (rgb[2] * 255, rgb[1] * 255, rgb[0] * 255)
+        frame = Frame(image=image, index=i, timestamp=t)
+        values = est.augment(frame, landmarks, Features({}, t)).values
+        if "hr_bpm" in values:
+            out.append((t, values["hr_bpm"]))
+    return out
+
+
+def _uniform_times(seconds: float, fs: float = 30.0):
+    return [i / fs for i in range(int(seconds * fs))]
+
+
+def test_alternating_frame_intervals_do_not_bias_hr():
+    times, t = [], 0.0
+    while t < 25.0:
+        times.append(t)
+        t += 0.033 if len(times) % 2 else 0.050
+    readings = _feed_at(times)
+    assert readings
+    assert max(abs(hr - 72.0) for _, hr in readings) < 1.0
+
+
+def test_a_short_dropout_is_bridged_without_bias():
+    # 0.8 秒の取りこぼし。本数と時間幅から出した平均の fps で読むと、空白ぶん時間軸が縮んで
+    # 心拍が数 bpm 低く出る。
+    times = [t for t in _uniform_times(25.0) if not 8.0 <= t < 8.8]
+    readings = _feed_at(times)
+    assert max(abs(hr - 72.0) for _, hr in readings) < 1.0
+
+
+def test_a_long_gap_restarts_the_window():
+    # 6 秒の空白をまたいだ窓は位相がつながらず、心拍が 20bpm 以上ずれる。空白で捨てて測り直す。
+    times = [t for t in _uniform_times(30.0) if not 8.0 <= t < 14.0]
+    readings = _feed_at(times)
+    assert max(abs(hr - 72.0) for _, hr in readings) < 1.0
+    after_gap = [t for t, _ in readings if t >= 14.0]
+    assert after_gap and min(after_gap) >= 14.0 + 6.0 - 0.05  # 窓の半分が貯まるまで出さない
+
+
 def test_estimate_hr_resolves_between_fft_bins():
     # FFT のビン幅は 10秒窓・30fps で 6bpm。補間なしだと 6bpm 刻みでしか出ない。
     fs, seconds = 30.0, 10.0

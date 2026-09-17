@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from ..contracts import CalibrationProfile, Features
+from .ear import eye_openness
 
 
 def _wrap_deg(deg: float) -> float:
@@ -22,6 +23,7 @@ def normalize_features(raw: Features, profile: CalibrationProfile, version: int 
     if "ear" in v and profile.ear_open_baseline > 1e-6:
         # 1.0=基準の開度。小さいほど閉じ気味。
         v["ear_norm"] = v["ear"] / profile.ear_open_baseline
+        v["eye_open"] = eye_openness(v["ear_norm"], v.get("eyeBlinkLeft"), v.get("eyeBlinkRight"))
     if "mar" in v:
         v["mar_rel"] = v["mar"] - profile.mar_neutral
     if "pitch" in v:

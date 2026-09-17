@@ -4,7 +4,8 @@
 `type: iphone` にしたアプリを動かし、もう片方でこれを実行すると、フレームを送って
 返ってきた判定を表示する。ファイアウォールや配線の切り分けにも使える。
 
-    python examples/iphone_fake_device.py --url ws://127.0.0.1:8765 --video sample.mp4
+    python examples/fake_device.py --url ws://127.0.0.1:8765 --video sample.mp4
+    python examples/fake_device.py --url wss://127.0.0.1:8765/ws   # ブラウザ版（TLS）
 
 --video を省くと合成画像を送る（顔は写っていないので判定は「見失い」側に倒れる）。
 """
@@ -14,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import ssl
 import struct
 import time
 
@@ -47,7 +49,13 @@ def _frames(path: str | None, count: int, size: tuple[int, int]):
 async def _run(args: argparse.Namespace) -> None:
     from websockets.asyncio.client import connect
 
-    async with connect(args.url) as ws:
+    context = None
+    if args.url.startswith("wss://"):
+        # ブラウザ版の証明書は自己署名なので、確認用のこのクライアントでは検証しない。
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    async with connect(args.url, ssl=context) as ws:
         print(f"[接続] {args.url}")
 
         async def show() -> None:

@@ -12,26 +12,29 @@
 from __future__ import annotations
 
 import threading
+from typing import Generic, TypeVar
 
-import numpy as np
-
-Snapshot = tuple[int, np.ndarray, float]  # (連番, 画像, 取り込み時刻)
+T = TypeVar("T")
 
 
-class LatestFrame:
-    """最新の1枚と、その連番を保持する。連番は「もう出したか」の判定に使う。"""
+class LatestFrame(Generic[T]):
+    """最新の1枚と、その連番を保持する。連番は「もう出したか」の判定に使う。
+
+    中身は復号済みの画像に限らない。ネットワーク越しの入力は、上書きされて
+    捨てられるフレームまで復号しないよう、圧縮されたまま預ける。
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._latest: Snapshot | None = None
+        self._latest: tuple[int, T, float] | None = None  # (連番, 画像, 取り込み時刻)
         self._count = 0
 
-    def put(self, image: np.ndarray, captured: float) -> None:
+    def put(self, image: T, captured: float) -> None:
         with self._lock:
             self._count += 1
             self._latest = (self._count, image, captured)
 
-    def take_newer_than(self, served: int) -> Snapshot | None:
+    def take_newer_than(self, served: int) -> tuple[int, T, float] | None:
         """served より新しい1枚。まだ無ければ None。"""
         with self._lock:
             latest = self._latest

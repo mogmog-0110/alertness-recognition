@@ -88,6 +88,8 @@ def build_source(
             certfile=net.get("certfile", ""),
             keyfile=net.get("keyfile", ""),
             web_root=net.get("web_root", ""),
+            advertise_host=net.get("advertise_host", ""),
+            announce=net.get("announce", True),
         )
         link.wait_ready()  # 番号が使用中なら、繋がらない症状ではなくここで分かる
         return RemoteSource(link)
@@ -172,6 +174,8 @@ def build_classifier(config: dict[str, Any]) -> Classifier:
         weights,
         policy_cfg.get("attack_frames", 2),
         policy_cfg.get("release_frames", 20),
+        policy_cfg.get("attack_seconds"),
+        policy_cfg.get("release_seconds"),
     )
     return CueClassifier(cues, policy)
 
@@ -196,6 +200,7 @@ def build_rppg(config: dict[str, Any]):
         resp_window_seconds=rcfg.get("resp_window_seconds", 30.0),
         resp_min_rpm=rcfg.get("resp_min_rpm", 6.0),
         resp_max_rpm=rcfg.get("resp_max_rpm", 30.0),
+        max_gap_seconds=rcfg.get("max_gap_seconds", 1.0),
     )
 
 
@@ -292,12 +297,19 @@ def _remote_sink(feedback: dict[str, Any], source: FrameSource | None):
 
     if not isinstance(source, RemoteSource):
         return None
+    from .feedback.cadence import AlertCadence
     from .feedback.remote import RemoteSink
 
     return RemoteSink(
         source.link,
         features=tuple(feedback.get("remote_features", feedback.get("iphone_features", ()))),
         names=feedback.get("remote_names", feedback.get("iphone_names", {})),
+        sounds=feedback.get("sounds", {}),
+        cadence=AlertCadence(
+            feedback.get("alert_cooldown_seconds", 5.0),
+            feedback.get("alert_min_interval_seconds", 1.5),
+            feedback.get("alert_escalate_factor", 0.7),
+        ),
     )
 
 

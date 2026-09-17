@@ -25,6 +25,12 @@ class CompositeSink:
             if callable(notify):
                 notify(obs, title, instruction, phase, remaining, progress, prompt_key)
 
+    def preparing(self, obs: Observation) -> None:
+        for sink in self._sinks:
+            notify = getattr(sink, "preparing", None)
+            if callable(notify):
+                notify(obs)
+
     def calibrating(
         self, obs: Observation, progress: float,
         waiting_for: str = "", expected_seconds: float = 0.0,

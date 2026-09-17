@@ -355,3 +355,101 @@ def test_the_old_config_key_still_works() -> None:
             assert source.link.port > 0, f"{key} で待ち受けられていない"
         finally:
             source.close()
+
+
+def test_a_second_device_replaces_the_first(link):
+    # 両方を生かすと 2 人の顔が交互に判定へ入り、撮影時刻の補正も 2 本の時計の間で壊れる。
+    first = _Device(link.port)
+    first.send(_message(500.0))
+    served, _ = _stamped(link, 0)
+
+    second = _Device(link.port)
+    first._thread.join(timeout=3.0)
+    assert not first._thread.is_alive(), "古い接続が閉じられていない"
+
+    second.send(_message(5.0))
+    served, start = _stamped(link, served)
+    second.send(_message(7.5))
+    _, later = _stamped(link, served)
+    link.send({"level": "none"})
+    assert _wait(lambda: second.replies)
+    second.close()
+    assert later - start == pytest.approx(2.5)
+
+
+def test_reopening_the_page_is_told_apart_from_a_reconnect() -> None:
+    # 張り直しなら基準をそのまま使い、開き直しなら前の人の基準を捨てさせる。
+    link = RemoteLink(port=0)
+    try:
+        link._accept('{"type": "hello", "session": "a"}')
+        link._accept('{"type": "hello", "session": "a"}')
+        assert link.take_commands() == ["new_session"]
+        link._accept('{"type": "hello", "session": "b"}')
+        link._accept('{"type": "hello"}')
+        assert link.take_commands() == ["new_session"]
+    finally:
+        link.close()
+
+
+def test_a_broken_jpeg_is_skipped_by_the_source(link):
+    # 復号は取り出す側で行うので、壊れた 1 枚はそこで読み飛ばす。
+    device = _Device(link.port)
+    device.send(_HEADER.pack(1.0) + b"not a jpeg")
+    assert _wait(_arrived(link))
+    source = RemoteSource(link)
+    frames = source.frames()
+    device.send(_message(2.0))
+    frame = next(frames)
+    device.close()
+    assert frame.timestamp == 2.0
+
+
+def test_scripts_are_served_as_javascript(tmp_path) -> None:
+    # module script は MIME が JavaScript でないとブラウザが実行を拒み、画面が真っ黒になる。
+    root = tmp_path / "web"
+    root.mkdir()
+    (root / "app.js").write_text("export {};", encoding="utf-8")
+    (root / "style.css").write_text("body{}", encoding="utf-8")
+
+    link = RemoteLink(port=0, web_root=str(root))
+    try:
+        link.wait_ready()
+        import urllib.request
+
+        base = f"http://127.0.0.1:{link.port}"
+        with urllib.request.urlopen(f"{base}/app.js") as res:
+            assert res.headers["Content-Type"].startswith("text/javascript")
+        with urllib.request.urlopen(f"{base}/style.css") as res:
+            assert res.headers["Content-Type"].startswith("text/css")
+    finally:
+        link.close()
+
+
+def test_a_sibling_directory_with_the_same_prefix_is_not_served(tmp_path) -> None:
+    root = tmp_path / "web"
+    root.mkdir()
+    (root / "index.html").write_text("ok", encoding="utf-8")
+    sibling = tmp_path / "web2"
+    sibling.mkdir()
+    (sibling / "secret.txt").write_text("secret", encoding="utf-8")
+
+    link = RemoteLink(port=0, web_root=str(root))
+    try:
+        link.wait_ready()
+        import urllib.error
+        import urllib.request
+
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{link.port}/../web2/secret.txt")
+            raise AssertionError("読み出せてしまった")
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
+    finally:
+        link.close()
+
+
+def test_a_startup_failure_names_its_cause(link):
+    second = RemoteLink("127.0.0.1", link.port)
+    with pytest.raises(RuntimeError, match="OSError"):
+        second.wait_ready()
+    second.close()

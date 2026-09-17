@@ -10,15 +10,26 @@ from alertness.classifier.cues.eye_closure import EyeClosureCue
 from alertness.classifier.cues.gaze_off import GazeOffCue
 from alertness.classifier.cues.hr_elevation import HrElevationCue
 from alertness.contracts import Features
+from alertness.temporal import TemporalContext
 
 
 def test_eye_closure_active_on_high_perclos():
-    frames = [Features({"ear_norm": 0.2}, i * 0.1) for i in range(50)]
+    frames = [Features({"ear_norm": 0.2}, i * 0.1) for i in range(120)]
     obs = make_observation(frames[-1], FakeHistory(frames))
     cue = EyeClosureCue(window_seconds=30, perclos_drowsy=0.4, closed_ratio=0.6)
     result = cue.evaluate(obs)
     assert result.active
     assert result.score >= 1.0
+
+
+def test_eye_closure_waits_for_enough_history():
+    # 測り直しで履歴を捨てた直後は数百 ms しか無い。瞬き 1 回で閉眼割合が跳ねないよう、
+    # 窓が貯まるまでは判定しない。
+    frames = [Features({"ear_norm": 0.2 if i < 3 else 1.0}, i * 0.1) for i in range(8)]
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    result = EyeClosureCue(window_seconds=30, perclos_drowsy=0.4).evaluate(obs)
+    assert not result.valid
+    assert result.score == 0.0
 
 
 def test_eye_closure_inactive_when_eyes_open():
@@ -214,18 +225,67 @@ def test_hr_elevation_inactive_without_rppg():
     assert result.score == 0.0
 
 
+def _run_live(cue, phases, fps: float = 10.0):
+    """実機と同じ 60 秒で切れる履歴に流し、1 秒ごとに (時刻, 結果) を集める。
+
+    FakeHistory は全履歴を返すので、履歴の長さを超える負荷で基準が崩れる壊れ方を再現できない。
+    """
+    history = TemporalContext(max_seconds=60.0, fps=fps)
+    step = int(fps)
+    out = []
+    t0 = 0.0
+    for seconds, values in phases:
+        for i in range(int(seconds * fps)):
+            features = Features({"rppg_quality": 0.7, **values}, t0 + i / fps)
+            history.append(features)
+            if i % step == 0:
+                out.append((features.timestamp, cue.evaluate(make_observation(features, history))))
+        t0 += seconds
+    return out
+
+
 def test_hr_elevation_uses_hrv_when_available():
-    # HRV(RMSSD)が本人基準より下がると、HRV経由でストレスを出す。
-    calm = [Features({"hrv_rmssd": 60.0, "rppg_quality": 0.7}, i * 0.1) for i in range(500)]
-    stressed = [
-        Features({"hrv_rmssd": 20.0, "rppg_quality": 0.7}, 50.0 + i * 0.1) for i in range(60)
-    ]
-    frames = calm + stressed
-    result = HrElevationCue(rmssd_span=25.0).evaluate(
-        make_observation(frames[-1], FakeHistory(frames))
-    )
-    assert result.detail.startswith("HRV")
-    assert result.active
+    # HR は変わらず RMSSD だけが下がる負荷。HRV 経由でストレスを出し、履歴の窓(60秒)より
+    # 長く続いても基準が負荷側へ寄って 0 に戻らないこと。
+    cue = HrElevationCue(rmssd_span=25.0)
+    rest = {"hr_bpm": 70.0, "hrv_rmssd": 40.0}
+    load = {"hr_bpm": 70.0, "hrv_rmssd": 20.0}
+    results = _run_live(cue, [(150.0, rest), (150.0, load)])
+    under_load = [r for t, r in results if t >= 165.0]
+    assert all(r.detail.startswith("HRV") for r in under_load)
+    assert min(r.score for r in under_load) >= 0.75
+    assert under_load[-1].active
+
+
+def test_hr_elevation_keeps_learning_hr_while_hrv_is_present():
+    # HRV がある間も HR の基準を育てる。止めると HR の進行度が 0 のまま残り、
+    # HRV が途切れた瞬間に基準の無い HR へ落ちる。
+    cue = HrElevationCue()
+    results = _run_live(cue, [(150.0, {"hr_bpm": 70.0, "hrv_rmssd": 40.0})])
+    assert cue._rest.progress() >= 1.0
+    assert cue._read_baseline()[2]
+    assert results[-1][1].valid
+
+
+def test_hr_elevation_sustained_load_with_both_signals_does_not_decay():
+    # HR +12bpm と RMSSD 40→25 が履歴の窓より長く続く負荷。HRV の基準が履歴の中央値だと
+    # 負荷の値に置き換わってスコアが 0 へ落ちる。
+    cue = HrElevationCue()
+    rest = {"hr_bpm": 70.0, "hrv_rmssd": 40.0}
+    load = {"hr_bpm": 82.0, "hrv_rmssd": 25.0}
+    results = _run_live(cue, [(150.0, rest), (180.0, load)])
+    under_load = [r for t, r in results if t >= 160.0]
+    assert min(r.score for r in under_load) >= 0.9
+    assert under_load[-1].detail.startswith("HR ")  # 強い方（HR 1.0 > HRV 0.6）が先に出る
+
+
+def test_hr_elevation_continues_on_hr_when_hrv_drops_out():
+    # HRV が途切れても、HR の基準が育っていれば HR 側で判定を続ける。
+    cue = HrElevationCue()
+    rest = {"hr_bpm": 70.0, "hrv_rmssd": 40.0}
+    results = _run_live(cue, [(150.0, rest), (20.0, {"hr_bpm": 82.0})])
+    assert results[-1][1].valid
+    assert results[-1][1].score >= 0.9
 
 
 def test_hr_elevation_falls_back_to_hr_without_hrv():
@@ -258,3 +318,46 @@ def test_hr_elevation_rest_samples_are_time_spaced():
     cue = HrElevationCue(baseline_seconds=60.0, rest_interval=1.0)
     _feed(cue, _hr(62.0, 60.0), step=1)  # 0.1秒刻みで600フレーム
     assert len(cue._rest._samples) <= 65  # 1秒間隔なら60件前後。重複していれば600件になる
+
+
+def _closure_then_open(open_seconds: float, blink_at: float | None = None):
+    """20 秒ふつうに開けて、9 秒閉じ、open_seconds 開ける。blink_at 秒後に 0.15 秒瞬く。"""
+    frames = []
+    t = 0.0
+    step = 0.05
+    while t < 20.0 + 9.0 + open_seconds:
+        closed = 20.0 <= t < 29.0
+        if blink_at is not None and 29.0 + blink_at <= t < 29.0 + blink_at + 0.15:
+            closed = True
+        frames.append(Features({"ear_norm": 0.3 if closed else 1.0, "yaw_rel": 0.0}, t))
+        t += step
+    return frames
+
+
+def test_eye_closure_releases_soon_after_the_eyes_open():
+    # PERCLOS は 30 秒の平均。目を大きく開けても閉眼が窓から抜けるまで警告が残ると、
+    # 直したのに鳴り続ける警告になる。
+    cue = EyeClosureCue(window_seconds=30, perclos_drowsy=0.25)
+    during = _closure_then_open(open_seconds=0.0)
+    assert cue.evaluate(make_observation(during[-1], FakeHistory(during))).active
+
+    opened = _closure_then_open(open_seconds=3.0)
+    result = cue.evaluate(make_observation(opened[-1], FakeHistory(opened)))
+    assert not result.active
+    assert result.score < 0.5
+
+
+def test_a_normal_blink_does_not_bring_the_warning_back():
+    cue = EyeClosureCue(window_seconds=30, perclos_drowsy=0.25)
+    frames = _closure_then_open(open_seconds=3.1, blink_at=3.0)  # 最後のフレームが瞬きの途中
+    result = cue.evaluate(make_observation(frames[-1], FakeHistory(frames)))
+    assert not result.active
+
+
+def test_half_closed_eyes_keep_the_warning():
+    # 長い閉眼が無いまま半目が続くのは、目を開けたとは言えない。点を下げない。
+    frames = [Features({"ear_norm": 0.5, "yaw_rel": 0.0}, i * 0.1) for i in range(150)]
+    result = EyeClosureCue(window_seconds=30, perclos_drowsy=0.4).evaluate(
+        make_observation(frames[-1], FakeHistory(frames))
+    )
+    assert result.active

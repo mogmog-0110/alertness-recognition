@@ -199,7 +199,9 @@ class Assessment:
         return max(d.level for d in self.dimensions.values())
 
     def headline(self) -> Dimension | None:
-        # 最も警告の強い軸。簡易表示用。
+        # 最も警告の強い軸。簡易表示用。段で先に比べるのは、端末が alert_level() の段と
+        # 並べて軸名を出すため。段はラッチで保たれるので、alarm だけで選ぶと段の高い軸が
+        # 下がりかけている間に別の軸の名前が出て、段と名前が食い違う。
         if not self.dimensions:
             return None
-        return max(self.dimensions.values(), key=lambda d: d.alarm)
+        return max(self.dimensions.values(), key=lambda d: (d.level, d.alarm))

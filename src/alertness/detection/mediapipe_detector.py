@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import os
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import cv2
@@ -14,7 +18,31 @@ import numpy as np
 from mediapipe.tasks import python as mp_python  # type: ignore[import]
 from mediapipe.tasks.python import vision  # type: ignore[import]
 
+from .. import log
 from ..contracts import FaceLandmarks, Frame
+
+
+@contextmanager
+def _native_stderr_silenced() -> Iterator[None]:
+    """C++ 側が標準エラーへ直接書くログを、この間だけ捨てる。
+
+    モデルの読み込みで XNNPACK や feedback manager の W/INFO 行が 4 行出るが、
+    利用者が対応できることは何もない。Python の sys.stderr を差し替えても
+    ネイティブの書き込みは止まらないので、fd 2 そのものを付け替える。
+    """
+    if log.is_verbose():
+        yield
+        return
+    sys.stderr.flush()
+    saved = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(devnull)
+        os.close(saved)
 
 
 class MediaPipeDetector:
@@ -32,7 +60,8 @@ class MediaPipeDetector:
             num_faces=max_faces,
             output_face_blendshapes=output_blendshapes,
         )
-        self._landmarker = vision.FaceLandmarker.create_from_options(options)
+        with _native_stderr_silenced():
+            self._landmarker = vision.FaceLandmarker.create_from_options(options)
 
     def detect(self, frame: Frame) -> FaceLandmarks:
         rgb = cv2.cvtColor(frame.image, cv2.COLOR_BGR2RGB)

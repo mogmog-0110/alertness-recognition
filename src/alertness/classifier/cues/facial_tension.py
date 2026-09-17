@@ -44,9 +44,13 @@ class FacialTensionCue:
         rest_interval: float = 1.0,
         freeze_at: float = 0.3,
         noise_k: float = 6.0,
+        absent_reset_seconds: float = 2.0,
     ) -> None:
         self.span = span  # 基準からこれだけ上がると満点（blendshape は 0..1）
         self.sustained_seconds = sustained_seconds  # 現在値を取る窓
+        # 顔がこれだけ続けて見えなければ、席を離れた（人が替わりうる）とみなして基準を捨てる。
+        # 検出の取りこぼし1フレームで捨てると、基準の確立をはじめからやり直すことになる。
+        self.absent_reset_seconds = absent_reset_seconds
         self._baseline = AdaptiveBaseline(
             seconds=baseline_seconds,
             min_samples=min_rest_samples,
@@ -54,16 +58,23 @@ class FacialTensionCue:
             freeze_at=freeze_at,
             noise_k=noise_k,
         )
+        self._absent_since: float | None = None
 
     def reset(self) -> None:
         """安静基準を捨てる。表情の基準は個人差が大きく、他人には使えない。"""
         self._baseline.reset()
+        self._absent_since = None
 
     def evaluate(self, obs: Observation) -> CueResult:
         progress = self._baseline.progress()
+        now = obs.features.timestamp
         if not obs.features.face_present:
-            self._baseline.reset()
+            if self._absent_since is None:
+                self._absent_since = now
+            if now - self._absent_since >= self.absent_reset_seconds:
+                self._baseline.reset()
             return CueResult(self.name, self.dimension, 0.0, False, "顔なし", progress, False)
+        self._absent_since = None
 
         current = self._tension(obs)
         if current is None:

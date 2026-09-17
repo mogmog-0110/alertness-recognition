@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 from _helpers import make_observation
 
@@ -206,3 +208,93 @@ def test_reset_clears_smoothing_and_levels():
     policy.reset()
     after = policy.decide(_obs(), [CueResult("eye_closure", "drowsiness", 0.0, False, "")])
     assert after.dimensions["drowsiness"].level == Level.NONE
+
+
+STRESS_WEIGHTS = {"hr_elevation": 1.0, "facial_tension": 1.0, "respiration": 0.8, "blink_rate": 0.6}
+
+
+def _stress_policy(min_agree: int = 2):
+    spec = DimensionSpec(
+        "stress", LEVELS, tuple(STRESS_WEIGHTS), combine="weighted", min_agree=min_agree
+    )
+    return _policy([spec], STRESS_WEIGHTS)
+
+
+def _stress_alarm(policy, scores: dict[str, float]) -> float:
+    cues = [CueResult(name, "stress", scores.get(name, 0.0), False, "") for name in STRESS_WEIGHTS]
+    return policy.decide(_obs(), cues).dimensions["stress"].alarm
+
+
+def test_min_agree_cues_give_the_full_warning_among_many_valid_cues():
+    # 4 本とも計測できていて 2 本が満点。全部の平均だと 0.59 で LOW に留まり鳴らない。
+    alarm = _stress_alarm(_stress_policy(), {"hr_elevation": 1.0, "facial_tension": 1.0})
+    assert alarm == pytest.approx(1.0)
+
+
+def test_min_agree_keeps_a_lone_cue_below_low_whatever_its_weight():
+    policy = _stress_policy()
+    for name in STRESS_WEIGHTS:
+        assert _stress_alarm(policy, {name: 1.0}) < LEVELS["low"], name
+    assert _stress_alarm(policy, {"hr_elevation": 1.0}) == pytest.approx(0.25)
+
+
+def test_min_agree_zero_averages_every_valid_cue():
+    scores = {"hr_elevation": 1.0, "facial_tension": 1.0}
+    assert _stress_alarm(_stress_policy(min_agree=0), scores) == pytest.approx(2.0 / 3.4)
+
+
+def _step_response(fps: float, seconds: float, **smoothing):
+    """1 秒満点を入れてから 0 に落とし、(時刻, alarm, 段) の列を返す。"""
+    spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure",))
+    policy = RuleBasedPolicy([spec], {"eye_closure": 1.0}, **smoothing)
+    out = []
+    for i in range(int(seconds * fps)):
+        t = i / fps
+        score = 1.0 if t < 1.0 else 0.0
+        cue = CueResult("eye_closure", "drowsiness", score, score > 0, "")
+        dim = policy.decide(make_observation(Features({}, t)), [cue]).dimensions["drowsiness"]
+        out.append((t, dim.alarm, dim.level))
+    return out
+
+
+def _cleared_after(response) -> float:
+    return next(t for t, _, level in response if t >= 1.0 and level == Level.NONE) - 1.0
+
+
+def test_release_takes_the_same_time_at_any_frame_rate():
+    # 1 フレームあたりの係数だと、同じ設定で 5fps の解除が 30fps の 6 倍かかる。
+    fast = _cleared_after(_step_response(30.0, 4.0, attack_frames=2, release_frames=20))
+    slow = _cleared_after(_step_response(5.0, 4.0, attack_frames=2, release_frames=20))
+    assert 0.4 <= fast <= 0.7
+    assert abs(slow - fast) <= 0.2 + 1e-9  # 5fps の 1 フレーム以内
+
+
+def test_frame_settings_match_the_per_frame_ema_at_the_reference_rate():
+    response = _step_response(30.0, 1.5, attack_frames=2, release_frames=20)
+    expected = response[0][1]  # 最初の標本は平滑せずそのまま置く
+    for t, alarm, _ in response[1:]:
+        target = 1.0 if t < 1.0 else 0.0
+        alpha = 2.0 / 3.0 if target > expected else 2.0 / 21.0
+        expected += alpha * (target - expected)
+        assert alarm == pytest.approx(expected, abs=1e-9)
+
+
+def test_seconds_override_the_frame_settings():
+    response = _step_response(10.0, 3.0, attack_seconds=0.0, release_seconds=1.0)
+    at = {round(t, 1): alarm for t, alarm, _ in response}
+    assert at[0.9] == pytest.approx(1.0)
+    assert at[1.0] == pytest.approx(math.exp(-0.1))  # 0.1 秒で 1-exp(-0.1/1.0) だけ下がる
+    assert at[2.0] == pytest.approx(math.exp(-1.1))
+
+
+def test_a_timestamp_that_does_not_advance_counts_as_one_reference_frame():
+    # 時刻が進まない、または戻った入力でも平滑値が止まらないこと。
+    spec = DimensionSpec("drowsiness", LEVELS, ("eye_closure",))
+    policy = RuleBasedPolicy([spec], {"eye_closure": 1.0}, attack_frames=2, release_frames=20)
+    calm = CueResult("eye_closure", "drowsiness", 0.0, False, "")
+    high = CueResult("eye_closure", "drowsiness", 1.0, True, "")
+    policy.decide(make_observation(Features({}, 5.0)), [calm])
+    same = policy.decide(make_observation(Features({}, 5.0)), [high])
+    assert same.dimensions["drowsiness"].alarm == pytest.approx(2.0 / 3.0)
+    back = policy.decide(make_observation(Features({}, 4.0)), [high])
+    assert back.dimensions["drowsiness"].alarm == pytest.approx(1.0 - (1.0 / 3.0) ** 2)

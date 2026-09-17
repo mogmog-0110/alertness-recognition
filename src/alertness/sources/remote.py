@@ -23,6 +23,7 @@ from collections.abc import Iterator
 import cv2
 import numpy as np
 
+from .. import log
 from ..contracts import Frame
 from ._latest import LatestFrame
 
@@ -33,12 +34,22 @@ _POLL_SECONDS = 0.001
 # 時刻が戻ったフレームを一切通さないための最小の刻み。検出器は時刻をミリ秒の整数に
 # 落とすので、これより細かく刻んでも同じ値になり「増えていない」と見なされる。
 _MIN_STEP_SECONDS = 0.001
+_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+}
+# 端末が開き直したことを判定ループへ伝える命令。端末の命令と同じ列に積む。
+NEW_SESSION = "new_session"
 
 
 class RemoteLink:
     """端末との WebSocket 接続。最新フレームを保持し、判定結果を送り返す。
 
-    1 台だけを相手にする。2 台目が繋いできたら、結果の宛先は新しい方に移る。
+    1 台だけを相手にする。2 台目が繋いできたら古い方を閉じる。両方を生かすと
+    2 人の顔が交互に判定へ入り、撮影時刻の補正も 2 本の時計の間で壊れる。
     """
 
     def __init__(
@@ -49,6 +60,8 @@ class RemoteLink:
         certfile: str = "",
         keyfile: str = "",
         web_root: str = "",
+        advertise_host: str = "",
+        announce: bool = True,
     ) -> None:
         self._host = host
         self._requested_port = port
@@ -56,8 +69,11 @@ class RemoteLink:
         self._certfile = certfile
         self._keyfile = keyfile
         self._web_root = os.path.abspath(web_root) if web_root else None
+        self._advertise_host = advertise_host
+        # 案内を自分で出す入口（alertness.demo）では、ここで URL を重ねて出さない。
+        self._announce = announce
         self._address = ""
-        self._latest = LatestFrame()
+        self._latest: LatestFrame[memoryview] = LatestFrame()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._finished: asyncio.Event | None = None
         self._ws = None
@@ -66,6 +82,7 @@ class RemoteLink:
         self._offset = 0.0
         self._last_stamped = float("-inf")
         self._last_seen = 0.0
+        self._session = ""
         self._ready = threading.Event()
         self._commands: list[str] = []
         self._commands_lock = threading.Lock()
@@ -93,12 +110,13 @@ class RemoteLink:
         if self._error is not None:
             raise RuntimeError(
                 f"ポート {self._requested_port} で待ち受けられませんでした"
-                f"（{type(self._error).__name__}）。"
-                "他のプロセスが使っていないか、source.iphone.port を確認してください。"
+                f"（{type(self._error).__name__}: {self._error}）。"
+                "他のプロセスが使っていないか、websockets と cryptography が入っているか"
+                "（scripts\\setup.bat）を確認してください。"
             ) from self._error
 
     def take_newer_than(self, served: int):
-        """served より新しい 1 枚。まだ無ければ None。"""
+        """served より新しい 1 枚（JPEG のまま）。まだ無ければ None。"""
         return self._latest.take_newer_than(served)
 
     def send(self, payload: dict) -> None:
@@ -145,21 +163,20 @@ class RemoteLink:
             max_size=self._max_message_bytes,
             ssl=context,
             process_request=self._serve_page,
-            # サーバ側の Wi-Fi が落ちると TCP が半開きのまま残ることがある。
-            # ライブラリ側でも短い周期で死活確認し、古い接続を回収する。
-            ping_interval=2,
-            ping_timeout=3,
+            # 半開きの接続を回収するための死活確認。端末は自分の ping で 4 秒以内に
+            # 張り直すので、ここは混んだ無線で pong が遅れても切らない長さにする。
+            # 3 秒では映像の送信待ちの後ろで pong が遅れただけで切れ、再接続を繰り返す。
+            ping_interval=5,
+            ping_timeout=10,
             close_timeout=1,
         ) as server:
             self._port = server.sockets[0].getsockname()[1]
             self._ready.set()
             scheme = "wss" if context else "ws"
-            print(f"[remote] 待ち受け {scheme}://{self._host}:{self._port}")
-            if self._web_root:
-                from ..webcert import local_ip
-
+            log.detail(f"[remote] 待ち受け {scheme}://{self._host}:{self._port}")
+            if self._web_root and self._announce:
                 page = "https" if context else "http"
-                address = self._address or local_ip()
+                address = self._address or self._advertise_host or _local_ip()
                 print(f"[remote] 端末のブラウザで開く: {page}://{address}:{self._port}/")
             await self._finished.wait()
 
@@ -179,7 +196,7 @@ class RemoteLink:
 
         from ..webcert import ensure
 
-        self._address, renewed = ensure(self._certfile, self._keyfile)
+        self._address, renewed = ensure(self._certfile, self._keyfile, self._advertise_host)
         if renewed:
             print(f"[remote] {self._address} 用の証明書を作りました（端末で再度承認が要ります）")
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -197,13 +214,12 @@ class RemoteLink:
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return None  # WebSocket はそのまま通す
 
-        import os
         from http import HTTPStatus
 
         name = request.path.split("?", 1)[0].lstrip("/") or "index.html"
         # ディレクトリを抜けられないようにする。
         path = os.path.normpath(os.path.join(self._web_root, name))
-        if not path.startswith(os.path.abspath(self._web_root)) or not os.path.isfile(path):
+        if not path.startswith(self._web_root + os.sep) or not os.path.isfile(path):
             return connection.respond(HTTPStatus.NOT_FOUND, "not found\n")
 
         from websockets.datastructures import Headers
@@ -211,11 +227,10 @@ class RemoteLink:
 
         with open(path, "rb") as handle:
             body = handle.read()
-        content_type = (
-            "text/html; charset=utf-8" if path.endswith(".html") else "application/octet-stream"
-        )
+        extension = os.path.splitext(path)[1].lower()
         headers = Headers()
-        headers["Content-Type"] = content_type
+        # module script は MIME が JavaScript でないとブラウザが実行を拒む。
+        headers["Content-Type"] = _CONTENT_TYPES.get(extension, "application/octet-stream")
         headers["Content-Length"] = str(len(body))
         headers["Cache-Control"] = "no-store"
         return Response(HTTPStatus.OK.value, HTTPStatus.OK.phrase, headers, body)
@@ -223,11 +238,15 @@ class RemoteLink:
     async def _on_connect(self, ws) -> None:
         from websockets.exceptions import ConnectionClosed
 
-        self._ws = ws
+        previous, self._ws = self._ws, ws
         self._new_session = True
-        print("[remote] 接続しました。")
+        if previous is not None:
+            asyncio.ensure_future(previous.close())
+        log.detail("[remote] 接続しました。")
         try:
             async for message in ws:
+                if self._ws is not ws:
+                    break  # 新しい接続に置き換わった。閉じ終わるまでに届いた分は捨てる
                 reply = self._accept(message)
                 if reply is not None:
                     # 判定ループを通さず返す。判定が重い／停止中でも通信経路の
@@ -238,7 +257,7 @@ class RemoteLink:
         finally:
             if self._ws is ws:
                 self._ws = None
-            print("[remote] 接続が切れました。待ち受けを続けます。")
+            log.detail("[remote] 接続が切れました。待ち受けを続けます。")
 
     def _accept(self, message) -> dict[str, str] | None:
         """1 メッセージを取り込む。壊れていれば黙って捨てる。
@@ -252,12 +271,10 @@ class RemoteLink:
         if not isinstance(message, bytes | bytearray) or len(message) <= _HEADER.size:
             return None
         (captured,) = _HEADER.unpack_from(message, 0)
-        payload = np.frombuffer(memoryview(message)[_HEADER.size :], dtype=np.uint8)
-        image = cv2.imdecode(payload, cv2.IMREAD_COLOR)
-        if image is None:
-            return None
-        # 常に最新の 1 枚だけ。遅れて届いた過去のフレームに価値は無い。
-        self._latest.put(image, self._stamp(float(captured)))
+        # 復号は取り出す側で行う。判定が 30fps に追いつかない間に届いた分は上書きされて
+        # 捨てられるので、ここで復号するとその分の CPU とイベントループの時間が無駄になり、
+        # pong の返信まで遅れる。
+        self._latest.put(memoryview(message)[_HEADER.size :], self._stamp(float(captured)))
         return None
 
     def _accept_command(self, text: str) -> dict[str, str] | None:
@@ -272,14 +289,33 @@ class RemoteLink:
             return None
         if not isinstance(payload, dict):
             return None
-        if payload.get("type") == "ping":
+        kind = payload.get("type")
+        if kind == "ping":
             return {"type": "pong"}
+        if kind == "hello":
+            self._greet(payload.get("session"))
+            return None
         command = payload.get("command", "")
         if not isinstance(command, str) or not command:
             return None
+        self._push(command)
+        return None
+
+    def _greet(self, session: object) -> None:
+        """端末がページを開き直したかを見分ける。
+
+        通信が切れて自力で張り直しただけなら基準も履歴もそのまま使える。ページを
+        開き直したなら別の人・別の置き方かもしれないので、判定ループに捨てさせる。
+        どちらも接続としては同じに見えるので、ページが開くたびに作る識別子で分ける。
+        """
+        if not isinstance(session, str) or not session or session == self._session:
+            return
+        self._session = session
+        self._push(NEW_SESSION)
+
+    def _push(self, command: str) -> None:
         with self._commands_lock:
             self._commands.append(command)
-        return None
 
     def take_commands(self) -> list[str]:
         """溜まった命令を取り出す。読んだ分は消える。"""
@@ -301,11 +337,20 @@ class RemoteLink:
         if self._new_session:
             self._new_session = False
             if self._last_stamped > float("-inf"):
-                self._offset = self._last_stamped + (now - self._last_seen) - captured
+                # 切れていた時間が時計の刻み（Windows では約 15ms）未満に測れると、区間の
+                # 最初の 1 枚だけが最小の刻みへ切り上げられ、区間内の間隔が 1ms ずれる。
+                gap = max(now - self._last_seen, _MIN_STEP_SECONDS)
+                self._offset = self._last_stamped + gap - captured
         stamped = max(captured + self._offset, self._last_stamped + _MIN_STEP_SECONDS)
         self._last_stamped = stamped
         self._last_seen = now
         return stamped
+
+
+def _local_ip() -> str:
+    from ..webcert import local_ip
+
+    return local_ip()
 
 
 class RemoteSource:
@@ -325,6 +370,10 @@ class RemoteSource:
         """結果の返送に使う接続。sink がここから同じ接続を掴む。"""
         return self._link
 
+    @property
+    def connected(self) -> bool:
+        return self._link.connected
+
     def take_commands(self) -> list[str]:
         """端末から届いた制御命令。読んだ分は消える。"""
         return self._link.take_commands()
@@ -336,7 +385,10 @@ class RemoteSource:
             if latest is None:
                 time.sleep(_POLL_SECONDS)
                 continue
-            served, image, captured = latest
+            served, jpeg, captured = latest
+            image = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image is None:
+                continue  # 壊れた 1 枚。次を待つ
             yield Frame(image=image, index=self._index, timestamp=captured, source_id="iphone")
             self._index += 1
 

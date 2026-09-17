@@ -5,7 +5,7 @@ from __future__ import annotations
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
 from ._eye_health import eye_signal_usable
-from ._support import trailing_true_seconds, window_values
+from ._support import eye_key, trailing_true_seconds, window_values
 
 
 class BlinkCue:
@@ -37,7 +37,7 @@ class BlinkCue:
             return CueResult(self.name, self.dimension, 0.0, False, reason, None, False)
 
         window = max(2.0, self.long_blink_seconds * 3)
-        times, ears = window_values(obs, "ear_norm", window, 1.0)
+        times, ears = window_values(obs, eye_key(obs), window, 1.0)
         flags = [e < self.closed_ratio for e in ears]
         duration = trailing_true_seconds(times, flags)
         score = clamp(duration / self.long_blink_seconds) if self.long_blink_seconds > 0 else 0.0
