@@ -62,7 +62,27 @@ def test_facial_tension_handles_missing_blendshapes():
     assert not result.valid
 
 
-def test_facial_tension_resets_when_face_lost():
+def _with_absence(absent_seconds: float):
+    """120 秒の安静のあと absent_seconds だけ顔を見失い、また 5 秒見える列。"""
+    frames = _frames(0.2, 120.0)
+    n = max(1, int(round(absent_seconds * 10)))
+    frames += [Features({}, 120.0 + i * 0.1, face_present=False) for i in range(n)]
+    return frames + _frames(0.2, 5.0, t0=120.0 + n * 0.1)
+
+
+def test_facial_tension_keeps_baseline_through_a_detection_blip():
+    # 1 フレームの取りこぼしで基準を捨てると、確立まで 70 秒以上判定が止まる。
     cue = FacialTensionCue(baseline_seconds=60.0)
-    _feed(cue, _frames(0.2, 120.0))
-    assert cue.evaluate(make_observation(Features({}, 200.0, face_present=False))).valid is False
+    result = _feed(cue, _with_absence(0.1), step=1)
+    assert result.valid
+    assert "測定中" not in result.detail
+
+
+def test_facial_tension_resets_when_face_lost():
+    # 見えない状態が続いたら席を離れたとみなし、次に映る人の表情を新しく測り直す。
+    cue = FacialTensionCue(baseline_seconds=60.0, absent_reset_seconds=2.0)
+    absent = cue.evaluate(make_observation(Features({}, 0.0, face_present=False)))
+    assert absent.valid is False
+    result = _feed(cue, _with_absence(3.0), step=1)
+    assert not result.valid
+    assert "測定中" in result.detail

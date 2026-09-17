@@ -3,6 +3,10 @@
 端末は運転者の手元にあるので、ここが実際の警告の出口になる。画面の文言と、音・振動を
 出すかどうかだけを送る。特徴量は開発中の切り分け用で、無くても端末は動く。
 
+鳴らす時点はこちらで決めて beep として送る。端末に間隔を持たせると、設定の
+alert_cooldown_seconds や HIGH での間隔の詰めが効かず、PC の窓と鳴り方が食い違う。
+sounds に無い軸（stress）は表示だけにする。緊張している運転者に警告音を重ねない。
+
 軸の表示名は config から受け取る。OpenCV の窓は日本語を描けないので軸名は英語のままに
 してあるが、端末の画面は日本語で出せる。名前の対応をここに埋め込むと軸を増やすたびに
 コードを触ることになるので、対応表は設定に置く。
@@ -12,7 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from ..contracts import Assessment, Level, Observation
+from ..contracts import Assessment, Dimension, Level, Observation
+from .cadence import AlertCadence
 
 _LEVEL_NAME = {
     Level.NONE: "none",
@@ -29,11 +34,16 @@ class RemoteSink:
         alert_from: Level = Level.MEDIUM,
         features: tuple[str, ...] = (),
         names: Mapping[str, str] | None = None,
+        sounds: Mapping[str, str] | None = None,
+        cadence: AlertCadence | None = None,
     ) -> None:
         self._link = link
         self._alert_from = alert_from
         self._features = features
         self._names = dict(names or {})
+        self._sounds = dict(sounds or {})
+        self._cadence = cadence or AlertCadence()
+        self._last_beep: float | None = None
         # ガイド中に判定 payload も送ると、端末が指示と判定を毎フレーム
         # 行き来して激しく点滅する (実測: 30fps でそのまま切り替わった)。
         # 指示が来ている間は画面を指示に譲る。
@@ -60,6 +70,12 @@ class RemoteSink:
             payload["dimension_key"] = dimension_key
             payload["dimension"] = shown
             payload["message"] = self._message(shown, level)
+            cause = _cause(head, assessment)
+            if cause:
+                payload["cause"] = cause
+        beep = self._beep(assessment, obs.features.timestamp)
+        if beep is not None:
+            payload["beep"] = beep
         if self._features:
             payload["features"] = self._selected(obs)
         self._link.send(payload)
@@ -92,6 +108,13 @@ class RemoteSink:
             }
         )
 
+    def preparing(self, obs: Observation) -> None:
+        """端末が開き直してから測り始めるまでの間。判定は送らない。"""
+        self._restart_cadence()
+        self._link.send(
+            {"timestamp": obs.features.timestamp, "phase": "preparing", "alert": False}
+        )
+
     def calibrating(
         self, obs: Observation, progress: float,
         waiting_for: str = "", expected_seconds: float = 0.0,
@@ -104,6 +127,7 @@ class RemoteSink:
         # progress は素の値をそのまま送る。心拍待ちの間は 0 のまま動かず最後に
         # 跳ねる量なので、端末はバーではなく回転表示で「動いている」ことだけを
         # 伝える。経過時間で滑らかに見せるのは、実態と違う値を出すことになる。
+        self._restart_cadence()  # 測り終えた直後の警告は、前の続きではなく最初の 1 回
         payload = {
             "timestamp": obs.features.timestamp,
             "phase": "calibrating",
@@ -114,6 +138,31 @@ class RemoteSink:
         if waiting_for:
             payload["waiting_for"] = waiting_for
         self._link.send(payload)
+
+    def _restart_cadence(self) -> None:
+        self._cadence.reset()
+        self._last_beep = None
+
+    def _beep(self, assessment: Assessment, now: float) -> dict[str, str] | None:
+        """いま鳴らす音。複数の軸が同時に鳴らし時なら段の高い方を 1 つだけ。
+
+        鳴らさない軸も含めて全軸を毎回 cadence に通す。収まったことが伝わらないと、
+        次に立ったときに詰めた間隔から鳴り始める。選ばれなかった軸は鳴らしたことに
+        しない。ただし直後に続けて鳴らすと 2 つの音が重なるので、どの軸でも前の音から
+        min_interval は空ける。
+        """
+        pending = [
+            dim
+            for dim in assessment.dimensions.values()
+            if dim.name in self._sounds and self._cadence.pending(dim.name, dim.level, now)
+        ]
+        recent = self._last_beep is not None and now - self._last_beep < self._cadence.min_interval
+        if not pending or recent:
+            return None
+        chosen = max(pending, key=lambda d: d.level)
+        self._cadence.mark(chosen.name, chosen.level, now)
+        self._last_beep = now
+        return {"sound": self._sounds[chosen.name], "level": _LEVEL_NAME[chosen.level]}
 
     def _selected(self, obs: Observation) -> dict[str, float]:
         # NaN は JSON では表せない（json は NaN を吐くが受け側の JSONDecoder が拒む）。
@@ -134,3 +183,18 @@ class RemoteSink:
 
     def close(self) -> None:
         pass  # 接続は RemoteLink の持ち物。source 側が閉じる
+
+
+def _cause(head: Dimension, assessment: Assessment) -> str:
+    """見出しの軸で一番強く効いている cue の名前。無ければ空文字。
+
+    軸の名前だけだと、顔を見失ったときも「眠気が強い」と出て運転者が戸惑う。
+    端末は cue 名から「顔が映っていません」のような原因の文に引き直す。
+    向きが反転する軸（集中）は score が低いほど警告なので、最小を取る。
+    """
+    active = set(head.contributing)
+    candidates = [c for c in assessment.cues if c.name in active and c.dimension == head.name]
+    if not candidates:
+        return ""
+    pick = min if head.alert_score is not None else max
+    return pick(candidates, key=lambda c: c.score).name

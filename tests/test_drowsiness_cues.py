@@ -13,13 +13,13 @@ from alertness.contracts import Features
 STEP = 0.05  # 20fps 相当。瞬きを刻める細かさ
 
 
-def _blink_series(closed_seconds: float, count: int, gap_seconds: float = 3.0):
-    """開眼→閉眼→開眼を count 回繰り返す ear_norm 列を作る。"""
+def _blink_series(closed_seconds: float, count: int, gap_seconds: float = 3.0, tail: float = 0.5):
+    """開眼→閉眼→開眼を count 回繰り返す ear_norm 列を作る。最後の瞬きの後は tail 秒だけ開ける。"""
     values: list[float] = []
     for _ in range(count):
         values += [1.0] * int(gap_seconds / STEP)
         values += [0.2] * max(1, int(closed_seconds / STEP))
-    values += [1.0] * int(gap_seconds / STEP)
+    values += [1.0] * int(tail / STEP)
     return [Features({"ear_norm": v, "yaw_rel": 0.0}, i * STEP) for i, v in enumerate(values)]
 
 
@@ -34,6 +34,56 @@ def test_closure_episodes_are_not_split_by_threshold_jitter():
     assert len(closure_episodes(times, ears, 0.6, 0.7)) == 1
 
 
+def _episodes_of(ears: list[float]):
+    times = [i * STEP for i in range(len(ears))]
+    return closure_episodes(times, ears, 0.6, 0.7)
+
+
+def test_reopen_time_never_reaches_past_the_next_blink():
+    # 0.4 までしか戻らずにすぐ次の瞬きへ入る。先へ探し続けると、次の瞬きの向こう側の
+    # 時刻が付き、瞬きの間隔が戻りの遅さとして数えられる。
+    ears = [1.0] * 10 + [0.2] * 3 + [0.75] + [0.55] * 3 + [0.2] * 3 + [1.0] * 20
+    first, second = _episodes_of(ears)
+    assert first.reopened is not None and first.reopened < second.start
+    assert second.reopen_seconds is not None
+
+
+def test_reopen_time_ignores_the_slow_tail_of_the_landmarks():
+    # ランドマークの値は、まぶたが開いた後も数百 ms かけて元の値へ漸近する。
+    # 9 割のような高い目標で測ると、この尾の長さを「戻りが遅い」と読んでしまう。
+    tail = [0.7 + 0.3 * (1 - 0.8**i) for i in range(30)]
+    ears = [1.0] * 10 + [0.2] * 2 + [0.6] + tail
+    first = _episodes_of(ears)[0]
+    assert first.reopen_seconds is not None
+    assert first.reopen_seconds <= 0.15
+
+
+def test_reopen_time_keeps_a_slow_rise_long():
+    # まぶたそのものの持ち上がりが遅い（底から 1 秒かけて開く）ときは長く出る。
+    rise = [0.2 + 0.8 * i / 20 for i in range(1, 21)]
+    ears = [1.0] * 10 + [0.2] * 3 + rise + [1.0] * 20
+    first = _episodes_of(ears)[0]
+    assert first.reopen_seconds is not None
+    assert first.reopen_seconds >= 0.6
+
+
+def test_reopen_target_follows_the_opening_before_the_blink():
+    # 普段の開き具合が校正時より細い人（0.8）でも、瞬き直前の値を基準に同じ物差しで測る。
+    ears = [0.8] * 10 + [0.2] * 2 + [0.52] + [0.8] * 20
+    first = _episodes_of(ears)[0]
+    assert first.reopen_seconds is not None
+    assert first.reopen_seconds <= 0.15
+
+
+def test_closure_times_fall_between_frames():
+    # 端末経由の 15〜25fps では、フレームに丸めると 1 回の瞬きに数十 ms の段差が乗る。
+    times = [0.0, 0.1, 0.2, 0.3, 0.4]
+    ears = [1.0, 0.2, 0.2, 1.0, 1.0]
+    (closure,) = closure_episodes(times, ears, 0.6, 0.7)
+    assert abs(closure.start - 0.05) < 1e-9
+    assert abs(closure.end - 0.2625) < 1e-9
+
+
 def test_blink_dynamics_quiet_on_normal_blinks():
     frames = _blink_series(closed_seconds=0.12, count=5)
     result = _evaluate(BlinkDynamicsCue(), frames)
@@ -45,8 +95,20 @@ def test_blink_dynamics_fires_on_slow_blinks():
     # 覚醒時の3倍近い閉眼が続く＝眠気の早期兆候。
     frames = _blink_series(closed_seconds=0.40, count=5)
     result = _evaluate(BlinkDynamicsCue(), frames)
-    assert result.score >= 1.0
+    assert result.score >= 0.85  # 最後の遅い瞬きから 0.5 秒ぶんだけ下がる
     assert result.active
+
+
+def test_blink_dynamics_releases_after_the_slow_blinks_stop():
+    # 遅い瞬きを続けた後に目を開けて普通に瞬きしても、窓の中央値は数十秒「遅い」のまま
+    # 動かない。最後の遅い瞬きからの経過で下げ、数秒で警告を解く。
+    slow = _blink_series(closed_seconds=0.40, count=8)
+    normal = _blink_series(closed_seconds=0.10, count=3, tail=1.0)
+    offset = slow[-1].timestamp + STEP
+    frames = slow + [Features(f.values, f.timestamp + offset) for f in normal]
+    result = _evaluate(BlinkDynamicsCue(), frames)
+    assert not result.active
+    assert result.score < 0.3
 
 
 def test_blink_dynamics_waits_for_enough_blinks():
@@ -188,3 +250,146 @@ def test_blink_dynamics_thresholds_match_the_measured_awake_range():
         make_observation(drowsy[-1], FakeHistory(drowsy))
     )
     assert result.score > 0.7, "眠気時の実測中央値では立つ"
+
+
+def _nod_frames(eyes_closed_during_drop: bool):
+    frames = []
+    t = 0.0
+    for _ in range(3):
+        for pitch in [0.0] * 20 + [12.0] * 5 + [0.0] * 20:
+            closing = eyes_closed_during_drop and pitch > 0
+            frames.append(Features({"pitch_rel": pitch, "eye_open": 0.3 if closing else 1.0}, t))
+            t += 0.1
+    return frames
+
+
+def test_nodding_with_open_eyes_is_not_drowsiness_when_gated():
+    # 相づちや話しながらの頷きは目が開いたまま起きる。
+    result = _evaluate(NoddingCue(nods_drowsy=3, eyes_closed_ratio=0.7), _nod_frames(False))
+    assert not result.active
+    assert "0回" in result.detail
+
+
+def test_nodding_with_closing_eyes_still_counts_when_gated():
+    result = _evaluate(NoddingCue(nods_drowsy=3, eyes_closed_ratio=0.7), _nod_frames(True))
+    assert result.active
+    assert "3回" in result.detail
+
+
+def test_eye_openness_needs_both_signals_to_close():
+    from alertness.features.ear import eye_openness
+
+    assert eye_openness(0.4, 0.1, 0.1) > 0.6, "EAR だけが閉じていても開いている"
+    assert eye_openness(1.0, 0.9, 0.9) == 1.0, "瞬きスコアだけでも閉じない"
+    assert eye_openness(0.3, 0.9, 0.9) < 0.6, "両方が閉じていれば閉じる"
+    assert eye_openness(0.4, None, None) == 0.4, "瞬きスコアが無ければ EAR のまま"
+
+
+def _head_down_frames(eye_open: float):
+    return [Features({"pitch_rel": 20.0, "eye_open": eye_open}, i * 0.1) for i in range(20)]
+
+
+def test_looking_down_with_open_eyes_is_not_drowsiness_when_gated():
+    # 手元のスマホや資料を見ているだけ。前を見ていない状態は注意散漫の側が拾う。
+    from alertness.classifier.cues.head_down import HeadDownCue
+
+    cue = HeadDownCue(pitch_down_deg=12, eyes_closed_ratio=0.7)
+    result = _evaluate(cue, _head_down_frames(eye_open=1.0))
+    assert not result.active
+    assert result.score == 0.0
+
+
+def test_dozing_with_the_head_down_still_counts_when_gated():
+    from alertness.classifier.cues.head_down import HeadDownCue
+
+    cue = HeadDownCue(pitch_down_deg=12, eyes_closed_ratio=0.7)
+    result = _evaluate(cue, _head_down_frames(eye_open=0.3))
+    assert result.active
+
+
+def test_eyes_closed_before_looking_down_do_not_make_it_dozing():
+    # 目を閉じてから目を開けて下を向いた。窓全体の閉眼率では通ってしまうので、
+    # 下を向いていた間に目も閉じていたかで見る。
+    from alertness.classifier.cues.head_down import HeadDownCue
+
+    # 0〜1.0 秒は目を閉じ、0.6 秒から下を向き、1.1 秒からは目を開けたまま下を向いている。
+    # 窓の閉眼率は 55% あるが、下を向いていた間に目も閉じていたのは 3 分の 1 ほど。
+    frames = [
+        Features({"pitch_rel": 20.0 if i >= 6 else 0.0, "eye_open": 0.3 if i <= 10 else 1.0},
+                 i * 0.1)
+        for i in range(20)
+    ]
+    cue = HeadDownCue(pitch_down_deg=12, sustained_seconds=2.0, eyes_closed_ratio=0.7)
+    assert not _evaluate(cue, frames).active
+
+
+def test_blink_dynamics_does_not_count_a_long_closure_as_a_blink():
+    # 3 秒閉じたのは瞬きではない（blink cue が受け持つ）。瞬きの中央値に混ぜると、
+    # 目を開けた後も数秒「まばたきが遅い」が立ち続ける。
+    values: list[float] = []
+    for closed in (0.10, 0.10, 0.10, 3.0, 3.0):
+        values += [1.0] * int(3.0 / STEP) + [0.2] * int(closed / STEP)
+    values += [1.0] * int(1.0 / STEP)
+    frames = [Features({"ear_norm": v, "yaw_rel": 0.0}, i * STEP) for i, v in enumerate(values)]
+    result = _evaluate(BlinkDynamicsCue(normal_seconds=0.40, drowsy_seconds=1.20), frames)
+    assert not result.active
+
+
+def _lost_after(yaw: float, pitch: float, eye_open: float, lost_seconds: float):
+    """2 秒かけて向きを変え、そのまま顔を見失う。"""
+    ahead = {"yaw_rel": 0.0, "pitch_rel": 0.0, "eye_open": 1.0}
+    frames = [Features(ahead, i * 0.1) for i in range(20)]
+    frames += [
+        Features({"yaw_rel": yaw, "pitch_rel": pitch, "eye_open": eye_open}, 2.0 + i * 0.1)
+        for i in range(5)
+    ]
+    lost = int(lost_seconds / 0.1)
+    frames += [Features({}, 2.5 + i * 0.1, face_present=False) for i in range(lost)]
+    return frames
+
+
+def test_a_face_lost_after_turning_away_stays_a_distraction():
+    # 横を向きすぎると顔の検出が外れて向きが測れない。そこで黙ると、脇見が注意散漫や
+    # 「顔が映っていません」として鳴る。
+    from alertness.classifier.cues.head_turn import HeadTurnCue
+
+    frames = _lost_after(yaw=30.0, pitch=0.0, eye_open=1.0, lost_seconds=4.0)
+    turned = _evaluate(HeadTurnCue(yaw_side_deg=15, lost_hold_seconds=10), frames)
+    assert turned.active
+    absent = _evaluate(FaceAbsentCue(explain_yaw_deg=15, explain_pitch_deg=12), frames)
+    assert not absent.active
+
+
+def test_a_face_lost_after_looking_down_is_left_to_inattention():
+    frames = _lost_after(yaw=0.0, pitch=25.0, eye_open=1.0, lost_seconds=4.0)
+    absent = _evaluate(FaceAbsentCue(explain_yaw_deg=15, explain_pitch_deg=12), frames)
+    assert not absent.active
+    assert "下を向いて" in absent.detail
+
+
+def test_slumping_with_closed_eyes_is_still_a_lost_driver():
+    # 目を閉じたまま前に崩れて顔が外れるのは、居眠りで最も危ない形。読み替えない。
+    # 居眠りでは目が先に閉じ、そのあと頭が落ちる。
+    def frame(t: float, pitch: float, eye_open: float) -> Features:
+        return Features({"yaw_rel": 0.0, "pitch_rel": pitch, "eye_open": eye_open}, t)
+
+    frames = [frame(i * 0.1, 0.0, 1.0) for i in range(15)]
+    frames += [frame(1.5 + i * 0.1, 0.0, 0.3) for i in range(10)]
+    frames += [frame(2.5 + i * 0.1, 25.0, 0.3) for i in range(5)]
+    frames += [Features({}, 3.0 + i * 0.1, face_present=False) for i in range(40)]
+    assert _evaluate(FaceAbsentCue(explain_yaw_deg=15, explain_pitch_deg=12), frames).active
+
+
+def test_a_long_disappearance_is_reported_even_after_turning():
+    # 向きを変えた続きと読むのは hold の間だけ。戻ってこなければ見失いとして知らせる。
+    frames = _lost_after(yaw=30.0, pitch=0.0, eye_open=1.0, lost_seconds=12.0)
+    cue = FaceAbsentCue(explain_yaw_deg=15, explain_pitch_deg=12, explained_hold_seconds=10)
+    assert _evaluate(cue, frames).active
+
+
+def test_looking_down_lowers_the_lids_but_is_not_a_slump():
+    # 下を向くとまぶたも下がる（実機で 0.68）。見失う直前の目で見ると、手元を見ただけで
+    # 「目を閉じて崩れた」と読み、注意散漫ではなく「顔が映っていません」が出ていた。
+    frames = _lost_after(yaw=0.0, pitch=18.0, eye_open=0.55, lost_seconds=4.0)
+    absent = _evaluate(FaceAbsentCue(explain_yaw_deg=15, explain_pitch_deg=12), frames)
+    assert not absent.active

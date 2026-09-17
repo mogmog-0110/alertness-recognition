@@ -9,16 +9,22 @@ PERCLOS が出てしまう。窓がどれだけ埋まっているかは window_c
 from __future__ import annotations
 
 from collections.abc import Sequence
-from statistics import median
 
 from ...contracts import Observation
 from ...geometry import clamp
 
-# 標本の間隔がここまで開いたら、その空白は代表時間に数えない。標本間隔の中央値の何倍か。
-# 顔なしフレームは除かれているので、空白は「見えていなかった時間」であり、直前の値が
-# その間も続いていた保証はない。頭打ちにしないと、顔を見失った 10 秒がその直前の
-# 1 標本の重みとして丸ごと計上される。
-_MAX_GAP_FACTOR = 2.0
+# 1 標本に計上する時間の上限（秒）。顔なしフレームは除かれているので、空白は「見えて
+# いなかった時間」であり、直前の値がその間も続いていた保証はない。頭打ちにしないと、
+# 顔を見失った 10 秒がその直前の 1 標本の重みとして丸ごと計上される。
+# 間隔の中央値の倍数では決めない。窓の途中で fps が落ちると中央値は速い側に残り、
+# 遅い側の標本が一律に削られる（30fps 5 秒 → 5fps 25 秒で被覆率 0.45、PERCLOS が
+# 0.33 のところ 0.14）。2fps までの間隔は素通しになる絶対値で持つ。
+MAX_GAP_SECONDS = 0.5
+
+
+def eye_key(obs: Observation) -> str:
+    """目の cue が読む開き具合の列名。eye_open を持たない古い記録では ear_norm に戻る。"""
+    return "eye_open" if "eye_open" in obs.features.values else "ear_norm"
 
 
 def window_values(
@@ -35,11 +41,11 @@ def window_values(
     return times, values
 
 
-def sample_durations(times: Sequence[float]) -> list[float]:
+def sample_durations(times: Sequence[float], max_gap: float = MAX_GAP_SECONDS) -> list[float]:
     """各標本が代表する時間（秒）。
 
     標本 i は次の標本までの間を代表し、末尾は次が無いので直前の間隔で代用する。
-    大きく空いた間隔は間隔中央値の _MAX_GAP_FACTOR 倍で頭打ちにする。
+    大きく空いた間隔は max_gap で頭打ちにする（0 以下なら頭打ちにしない）。
     標本が 1 点だけなら 1.0 を返す（割合の分母分子で相殺するので値自体に意味はない）。
     """
     n = len(times)
@@ -48,14 +54,15 @@ def sample_durations(times: Sequence[float]) -> list[float]:
     if n == 1:
         return [1.0]
     gaps = [times[i + 1] - times[i] for i in range(n - 1)]
-    cap = _MAX_GAP_FACTOR * median(gaps)
-    capped = [min(g, cap) if cap > 0 else g for g in gaps]
+    capped = [min(g, max_gap) if max_gap > 0 else g for g in gaps]
     return capped + [capped[-1]]
 
 
-def time_fraction(times: Sequence[float], flags: Sequence[bool]) -> float:
+def time_fraction(
+    times: Sequence[float], flags: Sequence[bool], max_gap: float = MAX_GAP_SECONDS
+) -> float:
     """True が占める時間の割合（0..1）。フレーム数ではなく時間で数える。"""
-    durations = sample_durations(times)
+    durations = sample_durations(times, max_gap)
     if not durations:
         return 0.0
     total = sum(durations)
@@ -64,7 +71,7 @@ def time_fraction(times: Sequence[float], flags: Sequence[bool]) -> float:
     return sum(d for d, f in zip(durations, flags, strict=True) if f) / total
 
 
-def window_coverage(obs: Observation, seconds: float) -> float:
+def window_coverage(obs: Observation, seconds: float, max_gap: float = MAX_GAP_SECONDS) -> float:
     """窓のうち顔が見えていた時間の割合（0..1）。
 
     分母は窓の公称長ではなく、履歴に実際にある時間幅。公称長で割ると、起動直後の
@@ -79,7 +86,7 @@ def window_coverage(obs: Observation, seconds: float) -> float:
     present = [f.timestamp for f in frames if f.face_present]
     if len(present) < 2:
         return 0.0
-    return clamp(sum(sample_durations(present)) / span)
+    return clamp(sum(sample_durations(present, max_gap)) / span)
 
 
 def trailing_true_seconds(times: Sequence[float], flags: Sequence[bool]) -> float:

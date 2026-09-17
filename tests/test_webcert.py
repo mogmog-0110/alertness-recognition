@@ -8,7 +8,17 @@ from __future__ import annotations
 
 import ipaddress
 
-from alertness.webcert import certificate_host, ensure, local_ip, write_self_signed
+from alertness.webcert import (
+    HOST_ENV,
+    advertised_host,
+    certificate_host,
+    certificate_hosts,
+    ensure,
+    key_matches,
+    lan_addresses,
+    local_ip,
+    write_self_signed,
+)
 
 
 def test_the_local_address_is_a_real_ipv4():
@@ -51,3 +61,41 @@ def test_ensure_replaces_a_stale_certificate(tmp_path):
     host, renewed = ensure(str(cert), str(key), "192.168.1.99")
     assert (host, renewed) == ("192.168.1.99", True)
     assert certificate_host(str(cert)) == "192.168.1.99"
+
+
+def test_every_candidate_address_is_in_one_certificate(tmp_path):
+    # 既定経路の NIC が端末と同じネットワークとは限らない。候補を全部入れておけば、
+    # 案内の別の URL で開き直しても承認のやり直しが要らない。
+    cert = tmp_path / "cert.pem"
+    key = tmp_path / "key.pem"
+    write_self_signed(["192.168.1.10", "10.0.0.5"], str(cert), str(key))
+    assert certificate_hosts(str(cert)) == ("192.168.1.10", "10.0.0.5")
+    assert ensure(str(cert), str(key), "10.0.0.5") == ("10.0.0.5", False)
+
+
+def test_a_key_that_does_not_match_is_replaced(tmp_path):
+    # 書き込みの途中で落ちると IP は合っているのに鍵だけ違う組が残り、TLS が毎回失敗する。
+    cert = tmp_path / "cert.pem"
+    key = tmp_path / "key.pem"
+    other = tmp_path / "other"
+    other.mkdir()
+    write_self_signed("192.168.1.10", str(cert), str(key))
+    write_self_signed("192.168.1.10", str(other / "cert.pem"), str(other / "key.pem"))
+    key.write_bytes((other / "key.pem").read_bytes())
+    assert not key_matches(str(cert), str(key))
+    assert ensure(str(cert), str(key), "192.168.1.10") == ("192.168.1.10", True)
+    assert key_matches(str(cert), str(key))
+
+
+def test_the_advertised_host_can_be_set_from_the_environment(monkeypatch):
+    monkeypatch.setenv(HOST_ENV, "10.1.2.3")
+    assert advertised_host() == "10.1.2.3"
+    assert advertised_host("192.168.1.10") == "192.168.1.10"
+
+
+def test_lan_addresses_start_with_the_default_route():
+    addresses = lan_addresses()
+    if local_ip().startswith("127."):
+        return  # オフラインの CI では既定経路が無い
+    assert addresses[0] == local_ip()
+    assert all(not a.startswith("127.") for a in addresses)

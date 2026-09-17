@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from ...contracts import Observation
 from ._episodes import closure_episodes
-from ._support import window_values
+from ._support import eye_key, window_values
 
 
 def eye_signal_usable(
@@ -33,7 +33,7 @@ def eye_signal_usable(
     窓が埋まりきっていない間は「使える」を返す。起動直後をサングラスと読むと、
     最も判定が要る立ち上がりの数十秒が丸ごと縮退運転になる。
     """
-    times, ears = window_values(obs, "ear_norm", window_seconds, 1.0)
+    times, ears = window_values(obs, eye_key(obs), window_seconds, 1.0)
     if len(times) < 2:
         return True, ""
     span = times[-1] - times[0]

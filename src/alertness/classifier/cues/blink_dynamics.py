@@ -17,8 +17,8 @@ from __future__ import annotations
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
 from ._episodes import closure_episodes
-from ._support import recency_weight, weighted_median as _weighted_median
-from ._support import window_coverage, window_values
+from ._support import eye_key, recency_weight, window_coverage, window_values
+from ._support import weighted_median as _weighted_median
 
 
 class BlinkDynamicsCue:
@@ -38,6 +38,8 @@ class BlinkDynamicsCue:
         max_yaw: float = 25.0,
         min_coverage: float = 0.5,
         half_life_seconds: float = 20.0,
+        max_blink_seconds: float = 2.0,
+        release_half_life: float = 3.0,
     ) -> None:
         self.window_seconds = window_seconds  # 瞬きを集める窓
         self.closed_ratio = closed_ratio  # 開眼基準の何割を下回ったら閉じ始めか
@@ -52,6 +54,14 @@ class BlinkDynamicsCue:
         # 窓の長さぶん効き続け、直後に普通の瞬きを重ねても下がりきらない。
         self.half_life_seconds = half_life_seconds
         self.min_coverage = min_coverage  # 窓のうち顔が見えていた時間の下限
+        # これより長い閉眼は瞬きではなく、意図して閉じたかマイクロスリープ。blink cue が
+        # その場で受け持つ。瞬きに混ぜると、目を開けた後も窓に残る数回の中央値を押し上げ、
+        # 開けてから数秒「まばたきが遅い」が立ち続ける。
+        self.max_blink_seconds = max_blink_seconds
+        # 最後の遅い瞬きからの経過でこの半減期で点を下げる。窓の中央値は、遅い瞬きを続けた
+        # 後だと普通の瞬きが同じ数だけ貯まるまで動かず、目を開けて普通に瞬きしていても
+        # 数十秒「まばたきが遅い」が立ち続ける。眠い間は遅い瞬きが数秒おきに続くので下がらない。
+        self.release_half_life = release_half_life
 
     def evaluate(self, obs: Observation) -> CueResult:
         if not obs.features.face_present:
@@ -64,8 +74,12 @@ class BlinkDynamicsCue:
             detail = f"計測不足 {coverage:.0%}"
             return CueResult(self.name, self.dimension, 0.0, False, detail, None, False)
 
-        times, ears = window_values(obs, "ear_norm", self.window_seconds, 1.0)
-        episodes = closure_episodes(times, ears, self.closed_ratio, self.open_ratio)
+        times, ears = window_values(obs, eye_key(obs), self.window_seconds, 1.0)
+        episodes = [
+            e
+            for e in closure_episodes(times, ears, self.closed_ratio, self.open_ratio)
+            if e.duration <= self.max_blink_seconds
+        ]
         if len(episodes) < self.min_blinks:
             # 瞬きが少ないうちに平均を出すと、1回の外れがそのまま判定になる。
             detail = f"瞬き {len(episodes)}回（観察中）"
@@ -91,9 +105,21 @@ class BlinkDynamicsCue:
                 self.drowsy_reopen,
             )
 
-        score = max(by_duration, by_reopen)
+        raw = max(by_duration, by_reopen)
+        freshness = recency_weight(now - self._last_slow(episodes, now), self.release_half_life)
         detail = f"閉眼 {duration * 1000:.0f}ms 戻り {_ms([v for v, _ in reopen_pairs])}"
-        return CueResult(self.name, self.dimension, score, score >= 1.0, detail)
+        active = raw >= 1.0 and freshness >= 0.5
+        return CueResult(self.name, self.dimension, raw * freshness, active, detail)
+
+    def _last_slow(self, episodes: list, now: float) -> float:
+        """普通より長いか戻りの遅い瞬きのうち、最後のものが終わった時刻。無ければ now。"""
+        slow = [
+            e.end
+            for e in episodes
+            if e.duration > self.normal_seconds
+            or (e.reopen_seconds is not None and e.reopen_seconds > self.normal_reopen)
+        ]
+        return slow[-1] if slow else now
 
 
 def _ramp(value: float, low: float, high: float) -> float:

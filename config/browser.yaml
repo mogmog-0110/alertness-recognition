@@ -1,9 +1,9 @@
 # ブラウザ版で使うときの設定。default.yaml との違いは source と feedback だけ。
 #
-#   python scripts/make_cert.py --host <このPCのIP>
-#   python -m alertness --config config/browser.yaml
+#   scripts\demo.bat                                  # デモ。案内だけを出す
+#   python -m alertness --config config/browser.yaml   # 収録など、引数を足すとき
 #
-# 端末のブラウザで https://<このPCのIP>:8765/ を開く。
+# 端末のブラウザで https://<このPCのIP>:8765/ を開く。証明書は起動時に自動で用意する。
 # 証明書の警告は「詳細を表示」→「このWebサイトを閲覧」で 1 回だけ承認する。
 
 # 既定設定。しきい値・窓幅・カメラ設定はここで一元管理し、コードには直書きしない。
@@ -29,8 +29,10 @@ source:
   remote:
     host: 0.0.0.0       # 全インタフェースで待つ
     port: 8765
-    # ブラウザは HTTPS でないとカメラを許可しない。
-    #   python scripts/make_cert.py --host <このPCのIP>
+    # 端末に案内する IP。空なら既定経路の IP を使う。VPN や有線と Wi-Fi の併用で
+    # 端末から届かない IP が選ばれるときに書く（環境変数 ALERTNESS_HOST でもよい）。
+    advertise_host: ""
+    # ブラウザは HTTPS でないとカメラを許可しない。証明書は起動時に今の IP で用意する。
     # ページと WebSocket を同じポートで出すので、端末で承認する証明書は 1 つ。
     certfile: certs/cert.pem
     keyfile: certs/key.pem
@@ -47,8 +49,7 @@ source:
   #   host: 0.0.0.0     # 全インタフェースで待つ。特定の NIC に絞るなら IP を書く
   #   port: 8765
   #   # ブラウザ版 (アプリを入れずにブラウザで使う) を出すときだけ設定する。
-  #   # ブラウザは HTTPS でないとカメラを許可しないので証明書が要る。
-  #   #   python scripts/make_cert.py --host <このPCのIP>
+  #   # ブラウザは HTTPS でないとカメラを許可しないので証明書が要る（起動時に自動で用意する）。
   #   # ページと WebSocket を同じポートで出すので、端末で承認する証明書は 1 つ。
   #   certfile: certs/cert.pem
   #   keyfile: certs/key.pem
@@ -73,7 +74,6 @@ detector:
 # 起動時に「その人の基準値」を取得して以降の判定を相対化する。
 calibration:
   enabled: true
-  mode: guided          # guided=案内付き / implicit=最初の数秒を基準とみなす
   duration_seconds: 3.0
   save_path: profiles/default.json   # 空文字なら保存しない
 
@@ -100,24 +100,15 @@ assessment:
     - name: distraction       # 注意逸脱
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
       cues: [head_turn, gaze_off]
-    - name: concentration     # 集中（視線が対象にあり、かつ走査もしているか。ML でも学習可）
-      # 2つの cue が逆向きの失敗を1本ずつ担当する。attention_buffer=目が離れすぎ、
-      # gaze_scanning=目が貼りついたまま動かない。combine は既定の max なので、
-      # どちらが欠けても警告が立つ。
+    - name: concentration     # 集中（視線が前方にあるか。ML でも学習可）
       levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: [attention_buffer, gaze_scanning]
+      # default.yaml にある gaze_scanning（視線が一点に留まる＝走査していない）は外す。前を見て
+      # 座っているだけで立ち、起きている人の収録で注意散漫の警告の 8 割を占めていた。
+      cues: [attention_buffer]
       alert_on: low           # 集中しているときではなく、していないときに警告する
       alert_name: inattentive
-    - name: stress            # ストレス・苛立ち（心拍と表情の一致で rule 判定。ML でも学習可）
-      levels: { low: 0.3, medium: 0.6, high: 0.8 }
-      cues: [hr_elevation, facial_tension, respiration, blink_rate]
-      # どの指標も単独では特異度が低い（心拍は体動でも上がり、表情は照明や集中でも動き、
-      # 呼吸は会話でも上がり、瞬きは乾燥でも増える）。weighted にして一致を要求する。
-      # max だと片方だけで警告まで届いてしまう。
-      combine: weighted
-      # 何本が「兆候あり」と言えば満額の警告にするか。足りなければその割合まで割り引く。
-      # 分母は計測できている cue だけなので、rPPG が拾えない環境でも残る指標で判定できる。
-      min_agree: 2
+    # stress（心拍と表情）はブラウザ版では判定しない。心拍の上がり幅が小さく参考にしか
+    # ならないうえ、安静基準に 1.5〜2.5 分かかる。軸の定義は default.yaml に残してある。
 
 # 特徴ごとの判定器（cue）。重みと個別パラメータを持つ。
 # パラメータ名は各 cue クラスの引数と一致させること。
@@ -136,14 +127,24 @@ cues:
   #   閉眼   覚醒 中央値 233ms / 眠気 中央値 1667ms
   #   戻り   覚醒 中央値 167ms / 眠気 中央値  300ms
   # 覚醒の 75%点を「通常」、眠気の中央値付近を「眠い」に置く。
+  # 戻りは「瞬き直前の開き具合の半分まで戻るまで」で測る（上の実測は開眼基準の 9 割で測った値）。
+  # 9 割ではランドマークが元の値へ漸近する尾まで数え、起きている人でも数百 ms〜数秒に伸びる。
+  # 測り方を変えても 0.20/0.45 のままで誤警告は増えなかったので値は据え置き。収録で引き直すこと。
   blink_dynamics: { weight: 0.8, window_seconds: 60, closed_ratio: 0.6, open_ratio: 0.7, normal_seconds: 0.40, drowsy_seconds: 1.20, normal_reopen: 0.20, drowsy_reopen: 0.45, min_blinks: 3 }
   # うなずき（落ちて戻す往復）。head_down は持続を条件にするのでこの動きを拾えない。
-  nodding:     { weight: 0.8, window_seconds: 60, amplitude_deg: 8, max_seconds: 2.5, nods_drowsy: 3 }
+  # eyes_closed_ratio: 頭が落ちる間とその直前に、目がこれより閉じていた時間が合計 0.4 秒以上ある
+  # 往復だけを数える。相づちや話しながらの頷きは目が開いたまま起きる。
+  # half_life_seconds: 最後のうなずきから点が半分になるまで。10 秒では止めてから 10 秒近く警告が残った。
+  nodding:     { weight: 0.8, window_seconds: 60, amplitude_deg: 8, max_seconds: 2.5, nods_drowsy: 3, eyes_closed_ratio: 0.7, half_life_seconds: 5 }
   # 運転者を見失っている状態。他の cue は顔なしで黙るので、この1本だけが声を出せる。
-  face_absent: { weight: 1.0, absent_seconds: 3.0, grace_seconds: 0.5 }
+  # explain_*: 目を開けたままこの角度以上横／下を向いた直後に見失ったのは、脇見・手元の注視の続き
+  # として扱い、「顔が映っていません」を出さない（head_turn と attention_buffer が受け持つ）。
+  face_absent: { weight: 1.0, absent_seconds: 3.0, grace_seconds: 0.5, explain_yaw_deg: 15, explain_pitch_deg: 12 }
   yawn:        { weight: 0.5, open_threshold: 0.4, min_seconds: 1.5 }
-  head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5 }
-  head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5 }
+  # 目を開けたまま下を向くのは手元を見ているのであって眠気ではない（注意散漫の側が拾う）。
+  head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5, eyes_closed_ratio: 0.7 }
+  # lost_hold_seconds: 横を向きすぎて顔を見失っても、この秒数までは横を向いたままとみなす。
+  head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5, lost_hold_seconds: 10 }
   # 視線に関わる3つのしきい値（off_threshold / center_radius / _zones.forward_gaze）は、
   # gaze_x が左右の動きに反応しなかった頃に置いた値なので、根拠が無い。当時は視線ズレが
   # 常に 0 で、どのしきい値を置いても結果は同じだった。録り直して較正すること。
@@ -225,7 +226,8 @@ cues:
 # 起動後 数秒ぶん貯まると各フレームに hr_bpm / rppg_quality が乗る。stress を使わない用途では
 # false にしてよい（その分の計算を省ける）。
 rppg:
-  enabled: true
+  # stress を判定しないので心拍推定も止める。測定が心拍を待たずに数秒で終わり、処理も軽くなる。
+  enabled: false
   window_seconds: 20          # 心拍推定に使う時間窓。短いと推定が跳ね、長いと反応が鈍る
   min_bpm: 42
   max_bpm: 180
@@ -263,8 +265,6 @@ feedback:
   # 端末が運転者の手元にある構成なので、PC 側の窓は開かない。
   # 観察用に見たいときは true に戻す。
   window: false
-  remote: true
-  remote_features: ["ear", "mar", "pitch_rel", "yaw_rel"]                # OpenCV ウィンドウに表示
   window_width: 0             # 表示の幅。0 なら撮影したままの大きさ。撮影解像度とは切り離して
                               # あるので、撮影を軽くしたまま表示だけ大きくすることもできる。
                               # ウィンドウは手でもドラッグして大きさを変えられる。
@@ -307,10 +307,12 @@ feedback:
     distraction: 脇見
     inattentive: 注意散漫
     stress: 緊張
-  sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted）
+  # 端末でも同じ音の種類と間隔で鳴らす（鳴らす時点はサーバが決めて送る）。
+  # ここに無い軸（stress）は画面に出すだけで鳴らさない。緊張している運転者に音を重ねない。
+  sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted / inattentive）
     drowsiness: drowsy
     distraction: distracted
-    concentration: distracted # 注意が外れたときに鳴る（alert_on: low のため）
+    concentration: inattentive # 注意が外れたときに鳴る（alert_on: low のため）
 
 # 学習データの録画。--record で有効化すると各フレームの特徴量＋判定をCSVに残す。
 recorder:

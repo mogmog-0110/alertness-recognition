@@ -1,0 +1,85 @@
+:root {
+  color-scheme: dark;
+  --medium: #d9a441;
+  --high: #d9584c;
+  --ok: #3ddc6b;
+  --muted: #c8c8c8;
+  --tone: var(--medium);
+}
+html, body {
+  margin: 0; height: 100%; background: #000; color: #fff;
+  font: 18px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+[hidden] { display: none !important; }
+
+/* 表示だけ鏡像にする。CSS の transform は drawImage に効かないので、
+   送る映像は反転しないまま (PC 側 webcam と同じ幾何を保つ)。 */
+#view { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover;
+        transform: scaleX(-1); }
+
+/* 警告。授業で使うので、点滅や画面の縁取りで煽らず、中央の文言で落ち着いて知らせる。
+   段階は色の強さだけで分け、赤は HIGH に限る。 */
+#alert { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
+         pointer-events: none; z-index: 2; }
+#alert.medium { --tone: var(--medium); }
+#alert.high { --tone: var(--high); }
+#alert-card { box-sizing: border-box; max-width: min(90vw, 640px);
+              padding: clamp(14px, 3vmin, 24px) clamp(20px, 5vmin, 40px);
+              border: 1px solid rgba(255, 255, 255, 0.16); border-top: 4px solid var(--tone);
+              border-radius: 14px; background: rgba(18, 18, 18, 0.86); text-align: center; }
+#alert-icon { width: clamp(36px, 9vmin, 64px); height: clamp(36px, 9vmin, 64px);
+              color: var(--tone); fill: none; stroke: currentColor; stroke-width: 1.8;
+              stroke-linecap: round; stroke-linejoin: round; }
+#alert-title { margin: 4px 0 2px; font-size: clamp(24px, 6vmin, 44px); font-weight: 700;
+               line-height: 1.25; }
+#alert-reason { margin: 0; font-size: clamp(17px, 4vmin, 26px); color: #dcdcdc; }
+
+#panel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1;
+         padding: 12px max(16px, env(safe-area-inset-right))
+                  max(12px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+         background: rgba(0, 0, 0, 0.62);
+         -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+#message { margin: 0 0 6px; font-size: clamp(22px, 5.2vmin, 34px); font-weight: 700;
+           line-height: 1.3; }
+#reason { margin: 0 0 10px; font-size: clamp(18px, 4.2vmin, 26px); color: #f2f2f2;
+          white-space: pre-line; }
+#spin { display: none; width: 0.8em; height: 0.8em; margin-right: 10px; vertical-align: -0.05em;
+        border: 3px solid #666; border-top-color: #fff; border-radius: 50%;
+        animation: turn 0.8s linear infinite; }
+#spin.on { display: inline-block; }
+@keyframes turn { to { transform: rotate(360deg); } }
+
+#status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+          font-size: 16px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#status.warn #state { color: var(--medium); font-weight: 700; }
+#dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #777; }
+#dot.on { background: var(--ok); }
+#status.warn #dot { background: var(--medium); }
+#sent { font-size: 14px; }
+#actions { display: flex; gap: 10px; margin-left: auto; }
+
+button { font: inherit; cursor: pointer; }
+button:focus-visible { outline: 3px solid #6ab7ff; outline-offset: 2px; }
+button:disabled { cursor: wait; opacity: 0.65; }
+#actions button { min-width: 44px; min-height: 44px; padding: 8px 18px; border-radius: 10px;
+                  border: 1px solid #777; background: #1c1c1c; color: #fff; font-size: 17px; }
+
+#start { position: fixed; inset: 0; z-index: 3; display: grid; place-content: center;
+         padding: 24px; background: #000; font-size: 22px; }
+#start-box { display: grid; justify-items: stretch; gap: 20px; width: min(320px, 84vw); }
+#start-box button { min-height: 56px; padding: 12px 20px; border-radius: 12px;
+                    border: 1px solid #777; background: #1c1c1c; color: #fff; }
+#start-box #go { background: #fff; color: #000; font-weight: 700; }
+#language-switch { display: grid; grid-template-columns: 1fr 1fr;
+                   border: 1px solid #777; border-radius: 12px; overflow: hidden; }
+#start-box #language-switch button { border: 0; border-radius: 0; background: #151515;
+                                     color: #aaa; }
+#start-box #language-switch button + button { border-left: 1px solid #777; }
+#start-box #language-switch button[aria-pressed="true"] { background: #fff; color: #000;
+                                                          font-weight: 700; }
+#sound-check { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+#sound-check-label { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 16px;
+                     text-align: center; }
+#start-box #sound-check button { min-height: 48px; padding: 8px 4px; font-size: 16px; }
+#start-error { margin: 0; color: #ff7070; font-size: 17px; text-align: center; }

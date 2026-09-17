@@ -10,7 +10,8 @@ import json
 
 from _helpers import make_observation
 
-from alertness.contracts import Assessment, Dimension, Features, Level
+from alertness.contracts import Assessment, CueResult, Dimension, Features, Level
+from alertness.feedback.cadence import AlertCadence
 from alertness.feedback.remote import RemoteSink
 
 
@@ -22,8 +23,10 @@ class _FakeLink:
         self.sent.append(payload)
 
 
-def _assessment(*dims: Dimension, timestamp: float = 1.0) -> Assessment:
-    return Assessment(dimensions={d.name: d for d in dims}, timestamp=timestamp)
+def _assessment(
+    *dims: Dimension, timestamp: float = 1.0, cues: tuple[CueResult, ...] = ()
+) -> Assessment:
+    return Assessment(dimensions={d.name: d for d in dims}, timestamp=timestamp, cues=cues)
 
 
 def _emit(sink: RemoteSink, assessment: Assessment, values: dict | None = None) -> dict:
@@ -201,3 +204,87 @@ def test_guided_progress_is_clamped() -> None:
     sink.guiding(obs, "t", "i", "ready", 1.0, 1.7)
     assert link.sent[0]["guided"]["progress"] == 1.0
     assert link.sent[0]["guided"]["prompt_key"] == ""
+
+
+_SOUNDS = {"drowsiness": "drowsy", "distraction": "distracted"}
+
+
+def _beeps(sink: RemoteSink, dims_at: list[tuple[float, tuple[Dimension, ...]]]) -> list:
+    return [_emit(sink, _assessment(*dims, timestamp=t)).get("beep") for t, dims in dims_at]
+
+
+def test_the_server_decides_when_the_device_beeps():
+    # 端末に間隔を持たせると、設定の間隔も HIGH での詰めも効かない。
+    sink = RemoteSink(_FakeLink(), sounds=_SOUNDS, cadence=AlertCadence(5.0, 1.5, 0.7))
+    medium = (Dimension("drowsiness", 0.7, Level.MEDIUM),)
+    beeps = _beeps(sink, [(0.0, medium), (1.0, medium), (5.0, medium)])
+    assert beeps == [{"sound": "drowsy", "level": "medium"}, None,
+                     {"sound": "drowsy", "level": "medium"}]
+
+
+def test_each_axis_has_its_own_sound():
+    sink = RemoteSink(_FakeLink(), sounds=_SOUNDS)
+    (beep,) = _beeps(sink, [(0.0, (Dimension("distraction", 0.9, Level.HIGH),))])
+    assert beep == {"sound": "distracted", "level": "high"}
+
+
+def test_stress_is_shown_but_never_beeps():
+    # 緊張している運転者に警告音を重ねない。表示だけにする。
+    sink = RemoteSink(_FakeLink(), sounds=_SOUNDS)
+    payload = _emit(sink, _assessment(Dimension("stress", 0.9, Level.HIGH)))
+    assert payload["alert"] is True
+    assert "beep" not in payload
+
+
+def test_the_louder_axis_wins_when_both_are_due():
+    sink = RemoteSink(_FakeLink(), sounds=_SOUNDS)
+    dims = (Dimension("drowsiness", 0.7, Level.MEDIUM), Dimension("distraction", 0.9, Level.HIGH))
+    (beep,) = _beeps(sink, [(0.0, dims)])
+    assert beep == {"sound": "distracted", "level": "high"}
+
+
+def test_the_strongest_cue_is_sent_as_the_cause():
+    # 顔を見失ったときに「眠気が強い」だけでは運転者が戸惑う。原因を添える。
+    cues = (
+        CueResult("eye_closure", "drowsiness", 0.4, True),
+        CueResult("face_absent", "drowsiness", 1.0, True),
+        CueResult("head_turn", "distraction", 1.0, True),
+    )
+    dim = Dimension("drowsiness", 0.95, Level.HIGH, ("eye_closure", "face_absent"))
+    payload = _emit(RemoteSink(_FakeLink()), _assessment(dim, cues=cues))
+    assert payload["cause"] == "face_absent"
+
+
+def test_an_inverted_axis_names_its_weakest_cue():
+    # 集中の軸は score が低いほど警告なので、一番低い cue が原因。
+    cues = (
+        CueResult("attention_buffer", "concentration", 0.1, True),
+        CueResult("gaze_scanning", "concentration", 0.6, True),
+    )
+    dim = Dimension(
+        "concentration", 0.1, Level.HIGH, ("attention_buffer", "gaze_scanning"),
+        alert_score=0.9, alert_name="inattentive",
+    )
+    payload = _emit(RemoteSink(_FakeLink()), _assessment(dim, cues=cues))
+    assert payload["cause"] == "attention_buffer"
+
+
+def test_preparing_holds_back_judgements_and_restarts_the_cadence():
+    link = _FakeLink()
+    sink = RemoteSink(link, sounds=_SOUNDS, cadence=AlertCadence(5.0, 1.5, 0.7))
+    high = (Dimension("drowsiness", 0.9, Level.HIGH),)
+    assert _beeps(sink, [(0.0, high)])[0] is not None
+    sink.preparing(make_observation(Features(values={}, timestamp=0.5)))
+    assert link.sent[-1] == {"timestamp": 0.5, "phase": "preparing", "alert": False}
+    # 準備を挟んだ後の警告は前の続きではなく、最初の 1 回としてすぐ鳴る。
+    assert _beeps(sink, [(1.0, high)])[0] is not None
+
+
+def test_an_axis_that_was_not_chosen_still_beeps_on_its_own_turn():
+    # 同時に鳴らし時になって選ばれなかった軸を、鳴らしたことにしてはいけない。
+    # 直後に重ねると 2 つの音が重なるので、前の音から最短間隔だけ空けて鳴らす。
+    sink = RemoteSink(_FakeLink(), sounds=_SOUNDS, cadence=AlertCadence(5.0, 1.5, 0.7))
+    both = (Dimension("drowsiness", 0.7, Level.MEDIUM), Dimension("distraction", 0.9, Level.HIGH))
+    beeps = _beeps(sink, [(0.0, both), (0.5, both), (1.5, both)])
+    assert beeps == [{"sound": "distracted", "level": "high"}, None,
+                     {"sound": "drowsy", "level": "medium"}]

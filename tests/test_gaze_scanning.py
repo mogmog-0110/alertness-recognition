@@ -35,6 +35,36 @@ def test_scanning_drops_when_gaze_is_frozen():
     assert "PRC 100%" in result.detail
 
 
+def _signed_frames(offsets, seconds: float = 30.0):
+    """向き付きの gaze_dx と、そこから作った gaze_off を持つ系列。"""
+    n = int(seconds * 10)
+    return [
+        Features(
+            {
+                "gaze_dx": offsets[i % len(offsets)],
+                "gaze_off": abs(offsets[i % len(offsets)]),
+                "yaw_rel": 0.0,
+            },
+            i * 0.1,
+        )
+        for i in range(n)
+    ]
+
+
+def test_symmetric_left_right_scanning_is_not_read_as_frozen():
+    # 左右の同じ角度を交互に見る。gaze_off は常に 0.04 で散らばりが 0 になるが、
+    # 実際には左右へ 0.08 の幅で走査している。
+    result = _last(GazeScanningCue(), _signed_frames([-0.04, -0.04, 0.04, 0.04]))
+    assert result.score >= 0.9
+    assert not result.active
+
+
+def test_signed_gaze_still_detects_a_frozen_stare():
+    result = _last(GazeScanningCue(), _signed_frames([0.001, 0.0011, 0.0009]))
+    assert result.score <= 0.1
+    assert result.active
+
+
 def test_scanning_does_not_judge_short_history():
     # 起動直後（履歴3秒）は判定しない。数十秒の窓で見る指標なので誤警告になる。
     result = _last(GazeScanningCue(min_window=10.0), _frames([0.001], seconds=3.0))

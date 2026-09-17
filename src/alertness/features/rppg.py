@@ -108,6 +108,27 @@ def estimate_respiration(
     return estimate_hr(x - _linear_trend(x), fs, min_rpm, max_rpm)
 
 
+def resample_uniform(times: np.ndarray, values: np.ndarray) -> tuple[np.ndarray, float]:
+    """不揃いな時刻の標本を、同じ本数の等間隔の格子へ線形補間で載せ直す。
+
+    返り値は (載せ直した標本, 標本化周波数[Hz])。FFT も拍検出も標本が等間隔である前提で
+    周波数と時刻を読む。フレーム間隔の揺れや短い取りこぼしをそのまま渡すと、その区間だけ
+    時間軸が伸び縮みしたのと同じになり、心拍がずれる。values は (N,) でも (N,チャンネル) でもよい。
+    時刻が2点未満か幅が無ければ、補間せずに標本化周波数 0 を返す。
+    """
+    t = np.asarray(times, dtype=float).ravel()
+    x = np.asarray(values, dtype=float)
+    span = float(t[-1] - t[0]) if t.size > 1 else 0.0
+    if span <= 0:
+        return x, 0.0
+    grid = np.linspace(t[0], t[-1], t.size)
+    fs = (t.size - 1) / span
+    if x.ndim == 1:
+        return np.interp(grid, t, x), fs
+    columns = [np.interp(grid, t, x[:, k]) for k in range(x.shape[1])]
+    return np.stack(columns, axis=1), fs
+
+
 def _linear_trend(x: np.ndarray) -> np.ndarray:
     """最小二乗で当てた直線。ゆっくりしたドリフトを抜くのに使う。"""
     t = np.arange(x.size, dtype=float)
@@ -187,6 +208,25 @@ def _with(features: Features, extra: dict[str, float]) -> Features:
     )
 
 
+def _push(
+    buf: deque[tuple[float, np.ndarray]],
+    sample: tuple[float, np.ndarray],
+    seconds: float,
+    max_samples: int,
+) -> None:
+    """標本を積み、時間窓から外れたものと上限を超えたものを古い側から落とす。"""
+    buf.append(sample)
+    cutoff = sample[0] - seconds
+    while buf and buf[0][0] < cutoff:
+        buf.popleft()
+    while len(buf) > max_samples:
+        buf.popleft()
+
+
+def _span_of(buf: deque[tuple[float, np.ndarray]]) -> float:
+    return buf[-1][0] - buf[0][0] if len(buf) > 1 else 0.0
+
+
 def _forehead_roi_mean(image: np.ndarray, landmarks: FaceLandmarks) -> np.ndarray | None:
     """額あたりの肌領域の平均色(RGB)を返す。取れなければ None。"""
     h, w = image.shape[:2]
@@ -218,8 +258,13 @@ class RppgEstimator:
         resp_window_seconds: float = 30.0,
         resp_min_rpm: float = 6.0,
         resp_max_rpm: float = 30.0,
+        max_gap_seconds: float = 1.0,
     ) -> None:
         self._fps = fps
+        # 標本の間がこれより空いたら貯めた肌色を捨てる。短い空白は等間隔へ載せ直すときの
+        # 補間で埋まるが、脈の数拍ぶんを直線でつなぐと前後の位相が合わず心拍がずれる。
+        self._max_gap = max_gap_seconds
+        self._last_at: float | None = None
         self._min_bpm = min_bpm
         self._max_bpm = max_bpm
         # 窓はフレーム数ではなく時間で切る。要求 fps が出ない機械だと、フレーム数で持つと
@@ -253,6 +298,7 @@ class RppgEstimator:
         """肌色バッファを捨てる。人が替わると額の色も脈も別物になる。"""
         self._buf.clear()
         self._resp_buf.clear()
+        self._last_at = None
 
     def augment(self, frame: Frame, landmarks: FaceLandmarks, features: Features) -> Features:
         if not landmarks.detected:
@@ -261,19 +307,15 @@ class RppgEstimator:
         if rgb is None:
             return features
 
-        self._buf.append((features.timestamp, rgb))
-        cutoff = features.timestamp - self._window_seconds
-        while self._buf and self._buf[0][0] < cutoff:
-            self._buf.popleft()
-        while len(self._buf) > self._max_samples:
-            self._buf.popleft()
-        respiration = self._respiration(features.timestamp, rgb)
+        now = features.timestamp
+        if not self._accept(now):
+            return features
+        _push(self._buf, (now, rgb), self._window_seconds, self._max_samples)
+        respiration = self._respiration(now, rgb)
         if len(self._buf) < 8 or self._span() < self._min_span:
             return _with(features, respiration)
 
-        times = np.array([t for t, _ in self._buf])
-        series = np.array([c for _, c in self._buf])
-        fs = self._effective_fs(times)
+        series, fs = self._uniform(self._buf)
         pulse = pos_signal(series)
         hr, quality = estimate_hr(pulse, fs, self._min_bpm, self._max_bpm)
 
@@ -286,24 +328,31 @@ class RppgEstimator:
         values.update(respiration)
         return Features(values=values, timestamp=features.timestamp, face_present=True)
 
+    def _accept(self, now: float) -> bool:
+        """この時刻の標本を積んでよいか。間が空いたか時刻が戻ったら、貯めた分を先に捨てる。"""
+        last = self._last_at
+        if last is not None and now == last:
+            return False  # 同じ時刻の2標本は等間隔の格子に載せられない
+        if last is not None and (now < last or now - last > self._max_gap):
+            self.reset()  # 時刻が戻るのは入力源が張り替わったとき
+        self._last_at = now
+        return True
+
+    def _uniform(self, buf: deque[tuple[float, np.ndarray]]) -> tuple[np.ndarray, float]:
+        times = np.array([t for t, _ in buf])
+        series, fs = resample_uniform(times, np.array([c for _, c in buf]))
+        return series, fs if fs > 0 else self._fps
+
     def _respiration(self, now: float, rgb: np.ndarray) -> dict[str, float]:
         """呼吸数を推定して {resp_rpm, resp_quality} を返す。出せなければ空。"""
         if not self._resp_enabled:
             return {}
-        self._resp_buf.append((now, rgb))
-        cutoff = now - self._resp_window
-        while self._resp_buf and self._resp_buf[0][0] < cutoff:
-            self._resp_buf.popleft()
-        while len(self._resp_buf) > self._resp_max_samples:
-            self._resp_buf.popleft()
-
-        times = np.array([t for t, _ in self._resp_buf])
+        _push(self._resp_buf, (now, rgb), self._resp_window, self._resp_max_samples)
         # 窓の8割は埋まっていること。呼吸1周期が最長10秒あるので、半端な窓では
         # 一番低い帯域にピークが立つだけで、呼吸数を読んだことにならない。
-        if times.size < 16 or float(times[-1] - times[0]) < self._resp_window * 0.8:
+        if len(self._resp_buf) < 16 or _span_of(self._resp_buf) < self._resp_window * 0.8:
             return {}
-        series = np.array([c for _, c in self._resp_buf])
-        fs = (times.size - 1) / float(times[-1] - times[0])
+        series, fs = self._uniform(self._resp_buf)
         rpm, quality = estimate_respiration(
             pos_signal(series), fs, self._resp_min_rpm, self._resp_max_rpm
         )
@@ -339,11 +388,4 @@ class RppgEstimator:
         return value <= self._hrv_max_ms and value <= self._hrv_max_ratio * mean_rr
 
     def _span(self) -> float:
-        return self._buf[-1][0] - self._buf[0][0] if len(self._buf) > 1 else 0.0
-
-    def _effective_fs(self, times: np.ndarray) -> float:
-        # 実フレーム間隔から標本化周波数を出す。取れなければ公称 fps。
-        span = float(times[-1] - times[0])
-        if span <= 0:
-            return self._fps
-        return (times.size - 1) / span
+        return _span_of(self._buf)

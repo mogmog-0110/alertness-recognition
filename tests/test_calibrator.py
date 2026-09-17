@@ -96,3 +96,46 @@ def test_the_pose_baseline_is_unchanged_away_from_the_boundary() -> None:
         )
     profile = calibrator.finalize()
     assert abs(profile.head_pose_neutral.pitch - 11.0) < 0.5
+
+
+def test_a_missing_face_is_named_as_the_reason_for_waiting() -> None:
+    # 顔が映らないフレームは数えないので、理由を出さないと回転表示が止まらないだけに見える。
+    cal = StatisticalCalibrator(duration_seconds=1.0, fps=30.0, warmup_seconds=0.0)
+    for i in range(20):
+        cal.collect(make_observation(Features(values={}, timestamp=i / 30.0, face_present=False)))
+    assert cal.waiting_for == "face"
+    _feed(cal, {"ear": 0.3}, [1.0])
+    assert cal.waiting_for == ""
+
+
+def _pose_frames(cal: StatisticalCalibrator, pitches, start: float = 0.0) -> None:
+    for i, pitch in enumerate(pitches):
+        values = {"ear": 0.3, "pitch": float(pitch), "yaw": 0.0}
+        cal.collect(make_observation(Features(values=values, timestamp=start + i / 30.0)))
+
+
+def test_a_moving_head_restarts_the_baseline() -> None:
+    # 構え直しの途中を基準にすると、以後ずっと「前を見ていない」扱いになる。
+    cal = StatisticalCalibrator(duration_seconds=1.0, fps=30.0, warmup_seconds=0.0)
+    _pose_frames(cal, [i * 1.0 for i in range(30)])  # 1 秒で 30 度うつむいていく
+    assert cal.progress < 1.0
+    assert cal.waiting_for == "steady"
+
+    _pose_frames(cal, [2.0] * 30, start=1.0)
+    assert cal.progress >= 1.0
+    assert cal.waiting_for == ""
+    assert abs(cal.finalize().head_pose_neutral.pitch - 2.0) < 1e-6
+
+
+def test_restarts_are_capped_so_calibration_always_ends() -> None:
+    cal = StatisticalCalibrator(duration_seconds=1.0, fps=30.0, warmup_seconds=0.0)
+    for round_ in range(3):
+        _pose_frames(cal, [i * 1.0 for i in range(30)], start=float(round_))
+    assert cal.progress >= 1.0
+
+
+def test_steady_jitter_near_the_180_boundary_is_not_movement() -> None:
+    # solvePnP の pitch は正面でも ±180 付近に居座る。跨いだだけを振れと数えない。
+    cal = StatisticalCalibrator(duration_seconds=1.0, fps=30.0, warmup_seconds=0.0)
+    _pose_frames(cal, [179.0 if i % 2 else -179.0 for i in range(30)])
+    assert cal.progress >= 1.0

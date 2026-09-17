@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 import numpy as np
@@ -17,5 +18,8 @@ def euclidean(p: Point, q: Point) -> float:
 
 
 def clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
-    # 値を [low, high] に収める。
+    # 値を [low, high] に収める。NaN は比較がすべて偽なので min/max を素通りして high に
+    # なり、測れなかった値が満点の警告に化ける。測れていない側（下限）へ倒す。
+    if math.isnan(value):
+        return low
     return max(low, min(high, value))

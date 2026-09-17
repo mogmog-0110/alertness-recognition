@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
+from ._departure import TURN, departure
 from ._support import trailing_true_seconds
 
 
@@ -20,13 +21,30 @@ class FaceAbsentCue:
     name = "face_absent"
     dimension = "drowsiness"
 
-    def __init__(self, absent_seconds: float = 3.0, grace_seconds: float = 0.5) -> None:
+    def __init__(
+        self,
+        absent_seconds: float = 3.0,
+        grace_seconds: float = 0.5,
+        explain_yaw_deg: float = 0.0,
+        explain_pitch_deg: float = 0.0,
+        explained_hold_seconds: float = 10.0,
+    ) -> None:
         self.absent_seconds = absent_seconds  # 連続でこれだけ見失ったら満点
         self.grace_seconds = grace_seconds  # 一瞬の検出漏れは数えない猶予
+        # 目を開けたままこの角度以上横／下を向いた直後に見失ったのは、脇見・手元の注視の
+        # 続き。head_turn と attention_buffer に任せ、explained_hold_seconds までは黙る。
+        # 0 ならその向きは見ない。
+        self.explain_yaw_deg = explain_yaw_deg
+        self.explain_pitch_deg = explain_pitch_deg
+        self.explained_hold_seconds = explained_hold_seconds
 
     def evaluate(self, obs: Observation) -> CueResult:
         if obs.features.face_present:
             return CueResult(self.name, self.dimension, 0.0, False, "")
+        gone = departure(obs, self.explain_yaw_deg, self.explain_pitch_deg)
+        if gone is not None and gone.absent_seconds <= self.explained_hold_seconds:
+            detail = "横を向いて顔が外れた" if gone.kind == TURN else "下を向いて顔が外れた"
+            return CueResult(self.name, self.dimension, 0.0, False, detail)
 
         window = max(2.0, self.absent_seconds * 2)
         frames = obs.history.recent(window)

@@ -18,6 +18,13 @@ import numpy as np
 
 from ..contracts import CalibrationProfile, Features, Observation, Pose
 
+# 基準を取る間の頭の振れ（10〜90 パーセンタイルの幅）がこれを超えたら取り直す。
+# 前方の許容は縦 ±10 度しかないので、構え直しの途中を基準にすると以後ずっと
+# 「前を見ていない」扱いになる。姿勢推定の揺らぎは静止時で数度に収まる。
+_MAX_POSE_SPREAD_DEG = 12.0
+# 動き続ける人でも測定が終わるよう、取り直しには回数の上限を置く。
+_MAX_RESTARTS = 2
+
 
 class StatisticalCalibrator:
     def __init__(
@@ -38,14 +45,39 @@ class StatisticalCalibrator:
         self._max = int(max_seconds * fps) if max_seconds > 0 else 0
         self._seen = 0
         self._samples: list[Features] = []
+        self._absent = 0  # 顔が映っていないフレームの連続数
+        self._restarts = 0
+        self._unsteady = False  # 直前の取り直しの理由が頭の振れだったか
 
     def collect(self, obs: Observation) -> None:
         if not obs.features.face_present:
+            self._absent += 1
             return
+        self._absent = 0
         self._seen += 1
         if self._seen <= self._warmup:  # ウォームアップ分は基準に使わない
             return
-        self._samples.append(obs.features)
+        self._samples = [*self._samples, obs.features]
+        if len(self._samples) == self._needed:
+            self._check_steady()
+
+    def _check_steady(self) -> None:
+        steady = self._pose_spread() <= _MAX_POSE_SPREAD_DEG
+        if steady or self._restarts >= _MAX_RESTARTS:
+            self._unsteady = False
+            return
+        self._restarts += 1
+        self._unsteady = True
+        self._samples = []
+
+    def _pose_spread(self) -> float:
+        spreads = [0.0]
+        for key in ("pitch", "yaw"):
+            offsets = self._angle_offsets(key)
+            if offsets.size >= 5:
+                low, high = np.percentile(offsets, [10, 90])
+                spreads.append(float(high - low))
+        return max(spreads)
 
     @property
     def progress(self) -> float:
@@ -78,6 +110,10 @@ class StatisticalCalibrator:
         幾何がとっくに揃っていても進捗が 0 のまま止まって見える。理由を
         出さないと故障と区別できない。
         """
+        if self._absent >= self._min_key:
+            return "face"
+        if self._unsteady:
+            return "steady"
         if not self._require:
             return ""
         if len(self._samples) < self._needed:
@@ -121,15 +157,25 @@ class StatisticalCalibrator:
         平均ではなく中央値なのは、キャリブ中の一瞬の検出ミスに引きずられない
         ようにするため（元の実装の意図をそのまま保つ）。
         """
+        center, offsets = self._circular(key)
+        if offsets.size == 0:
+            return default
+        median = center + float(np.median(offsets))
+        return float((math.degrees(median) + 180.0) % 360.0 - 180.0)
+
+    def _angle_offsets(self, key: str) -> np.ndarray:
+        """円周上の中心からのずれ（度）。±180 を跨いでも振れを正しく測るため。"""
+        _, offsets = self._circular(key)
+        return np.degrees(offsets)
+
+    def _circular(self, key: str) -> tuple[float, np.ndarray]:
         values = [f.get(key) for f in self._samples]
         values = [v for v in values if not math.isnan(v)]
         if not values:
-            return default
+            return 0.0, np.zeros(0)
         radians = np.radians(values)
         center = math.atan2(float(np.mean(np.sin(radians))), float(np.mean(np.cos(radians))))
-        offsets = np.angle(np.exp(1j * (radians - center)))
-        median = center + float(np.median(offsets))
-        return float((math.degrees(median) + 180.0) % 360.0 - 180.0)
+        return center, np.angle(np.exp(1j * (radians - center)))
 
     def _median(self, key: str, default: float) -> float:
         values = [f.get(key) for f in self._samples]

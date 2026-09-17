@@ -104,3 +104,14 @@ def test_tone_shapes_produce_a_wav(tmp_path, shape):
     path = tmp_path / f"{shape}.wav"
     make_chime_wav(path, "drowsy", shape)
     assert path.stat().st_size > 0
+
+
+def test_pending_does_not_count_as_a_play():
+    from alertness.feedback.cadence import AlertCadence
+
+    cadence = AlertCadence(cooldown_seconds=5.0)
+    assert cadence.pending("drowsiness", Level.MEDIUM, 0.0)
+    assert cadence.pending("drowsiness", Level.MEDIUM, 0.1), "印を付けるまでは鳴らし時のまま"
+    cadence.mark("drowsiness", Level.MEDIUM, 0.1)
+    assert not cadence.pending("drowsiness", Level.MEDIUM, 1.0)
+    assert cadence.pending("drowsiness", Level.MEDIUM, 5.1)

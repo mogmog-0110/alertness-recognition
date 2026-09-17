@@ -39,6 +39,7 @@ _GEOMETRY_COLUMNS = (
 # キャリブ基準で相対化した値。個人差・設置差を吸収してあるので学習にはこちらを使う。
 _NORMALIZED_COLUMNS = (
     "ear_norm",
+    "eye_open",
     "mar_rel",
     "pitch_rel",
     "yaw_rel",

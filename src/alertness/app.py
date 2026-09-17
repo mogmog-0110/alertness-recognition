@@ -14,16 +14,20 @@ import argparse
 import signal
 from typing import Any
 
-from . import factory, profiling
+from . import factory, log, profiling
 from .calibration.store import save_profile
 from .config import load_config
 from .labeling import LabelState, key_label_map
+from .sources.remote import NEW_SESSION
 from .watchdog import Watchdog
 
 _KEY_QUIT = ord("q")
 _KEY_RECALIBRATE = ord("c")
 # 検出がこの回数だけ続けて失敗したら、一時的な不調ではなく壊れていると見る。
 _MAX_DETECT_FAILURES = 30
+# 端末がページを開き直してから、測り直しの命令が来なくても自分で測り始めるまでの秒数。
+# 端末は構え直しを待って 4 秒後に命令を送るので、それより長く取る。
+_SESSION_CALIBRATE_FALLBACK_SECONDS = 8.0
 
 
 class App:
@@ -74,6 +78,10 @@ class App:
         profiling.enable(self._feedback.get("profile", False))
         self._stopping = False
         self._detect_failures = 0
+        # 端末が開き直してから、測り始めるまで判定を出さずに待っている間 True。
+        self._preparing = False
+        self._preparing_since: float | None = None
+        self._stall_reported = False
         self._watchdog = Watchdog(
             stall_seconds=self._feedback.get("stall_seconds", 3.0),
             repeat_seconds=self._feedback.get("stall_repeat_seconds", 5.0),
@@ -81,12 +89,17 @@ class App:
             on_recover=self._on_recover,
         )
 
-    @staticmethod
-    def _on_stall(silent: float) -> None:
+    def _on_stall(self, silent: float) -> None:
+        # 端末が繋がっていないのは待ち受け中の正常な姿で、操作者が直すものではない。
+        if not getattr(self._source, "connected", True):
+            return
+        self._stall_reported = True
         print(f"[異常] 判定が {silent:.1f} 秒とまっています。カメラと接続を確認してください。")
 
-    @staticmethod
-    def _on_recover(_silent: float) -> None:
+    def _on_recover(self, _silent: float) -> None:
+        if not self._stall_reported:
+            return
+        self._stall_reported = False
         print("[復帰] 判定が再開しました。")
 
     def request_stop(self) -> None:
@@ -139,7 +152,6 @@ class App:
 
     def run(self) -> None:
         self._install_signal_handlers()
-        self._watchdog.start()
         try:
             frames = self._source.frames()
             while not self._stopping:
@@ -147,13 +159,17 @@ class App:
                     frame = next(frames, None)
                 if frame is None:
                     break
+                # 最初の 1 枚が来てから見張る。端末が繋ぐ前の沈黙は異常ではない。
+                self._watchdog.start()
                 self._watchdog.beat()
                 self._handle_remote_commands()
                 with profiling.stage("observe"):
                     obs = self._observe(frame)
                 if obs is None:
                     continue
-                if self._calibrating:
+                if self._preparing:
+                    self._wait_for_calibration(obs)
+                elif self._calibrating:
                     with profiling.stage("output"):
                         self._calibrate(obs)
                 elif self._guided is not None:
@@ -199,6 +215,9 @@ class App:
         """
 
         def handler(_signum, _frame):
+            if self._stopping:
+                # 2 回目は待たない。検出器の中で固まっていると旗を読みに戻れない。
+                raise KeyboardInterrupt
             self.request_stop()
 
         for name in ("SIGINT", "SIGTERM"):
@@ -297,16 +316,42 @@ class App:
             return
         for command in take():
             if command == "recalibrate":
-                print("[remote] 端末から再キャリブを受け取りました。")
+                log.detail("[remote] 端末から再キャリブを受け取りました。")
                 self._recalibrate()
+            elif command == NEW_SESSION:
+                log.detail("[remote] 端末がページを開き直しました。")
+                self._start_session()
             else:
-                print(f"[remote] 未知の命令を無視しました: {command}")
+                log.detail(f"[remote] 未知の命令を無視しました: {command}")
+
+    def _start_session(self) -> None:
+        """開き直した端末の測り直しを待つ。それまで判定を出さない。
+
+        前の人の基準のまま判定すると、構え直しの間に顔が外れただけで眠気や
+        注意散漫の警告が鳴る。基準も履歴も捨て、端末が構え終わって命令を
+        送ってくるまで「準備中」を返す。
+        """
+        self._pipeline.reset_state()
+        self._calibrating = False
+        self._preparing = True
+        self._preparing_since = None
+
+    def _wait_for_calibration(self, obs: Any) -> None:
+        now = obs.features.timestamp
+        if self._preparing_since is None:
+            self._preparing_since = now
+        notify = getattr(self._sinks, "preparing", None)
+        if callable(notify):
+            notify(obs)
+        if now - self._preparing_since >= _SESSION_CALIBRATE_FALLBACK_SECONDS:
+            self._recalibrate()  # 命令が届かない古いページでも測り始める
 
     def _recalibrate(self) -> None:
         # 別人に替わった可能性があるので、本人前提で育てた基準と履歴も捨てる。
         self._pipeline.reset_state()
         self._calibrator = factory.build_calibrator(self._config)
         self._calibrating = True
+        self._preparing = False
 
     def _close(self) -> None:
         self._watchdog.close()
@@ -315,7 +360,7 @@ class App:
         self._source.close()
 
 
-def main(argv: list[str] | None = None) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="覚醒度・注意状態の認識デモ")
     parser.add_argument("--config", default="config/default.yaml", help="設定ファイル")
     parser.add_argument("--record", action="store_true", help="特徴量CSVを録画する")
@@ -336,9 +381,22 @@ def main(argv: list[str] | None = None) -> int:
         help="シナリオ再生。動画と『その時刻に何が起きているはず』を組にした manifest(JSON) を"
         "実時間で流し、判定と期待ラベルを並べて出す。舞台で人が眠くなるのを待たずに済む",
     )
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="接続の出入り・端末からの命令・MediaPipe の内部ログも出す"
+        "（繋がらないときの切り分け用）",
+    )
+    return parser.parse_args(argv)
 
-    config = load_config(args.config)
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    return run(args, load_config(args.config))
+
+
+def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
+    log.set_verbose(args.verbose)
     App(
         config,
         record=args.record,

@@ -22,6 +22,23 @@ def eye_aspect_ratio(points: Sequence[Point]) -> float:
     return vertical / (2.0 * horizontal)
 
 
+# 瞬きスコアを EAR の尺度へ写す係数。スコア 0.5 が閉眼しきい値 0.6 に重なる。
+BLINK_TO_EAR = 0.8
+
+
+def eye_openness(ear_norm: float, blink_left: float | None, blink_right: float | None) -> float:
+    """EAR と MediaPipe の瞬きスコアの両方が閉じていると言うときだけ閉じる開き具合。
+
+    EAR は 6 点の幾何なので、少し下を向いたり目を細めたりしただけで閉眼しきい値を
+    割る。瞬きスコアは顔全体から推定するので姿勢に強いが、単独ではまぶたの戻りの
+    速さを測るには粗い。開いている側を採ると、片方だけの誤りでは閉眼にならない。
+    瞬きスコアが無い記録（古い CSV など）では EAR をそのまま使う。
+    """
+    if blink_left is None or blink_right is None:
+        return ear_norm
+    return max(ear_norm, 1.0 - BLINK_TO_EAR * (blink_left + blink_right) / 2.0)
+
+
 def is_eye_closed(ear: float, open_baseline: float, closed_ratio: float) -> bool:
     """開眼基準に対する割合で閉眼を判定する。
 

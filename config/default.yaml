@@ -30,8 +30,7 @@ source:
   #   host: 0.0.0.0     # 全インタフェースで待つ。特定の NIC に絞るなら IP を書く
   #   port: 8765
   #   # ブラウザ版 (アプリを入れずにブラウザで使う) を出すときだけ設定する。
-  #   # ブラウザは HTTPS でないとカメラを許可しないので証明書が要る。
-  #   #   python scripts/make_cert.py --host <このPCのIP>
+  #   # ブラウザは HTTPS でないとカメラを許可しないので証明書が要る（起動時に自動で用意する）。
   #   # ページと WebSocket を同じポートで出すので、端末で承認する証明書は 1 つ。
   #   certfile: certs/cert.pem
   #   keyfile: certs/key.pem
@@ -56,7 +55,6 @@ detector:
 # 起動時に「その人の基準値」を取得して以降の判定を相対化する。
 calibration:
   enabled: true
-  mode: guided          # guided=案内付き / implicit=最初の数秒を基準とみなす
   duration_seconds: 3.0
   save_path: profiles/default.json   # 空文字なら保存しない
 
@@ -119,14 +117,24 @@ cues:
   #   閉眼   覚醒 中央値 233ms / 眠気 中央値 1667ms
   #   戻り   覚醒 中央値 167ms / 眠気 中央値  300ms
   # 覚醒の 75%点を「通常」、眠気の中央値付近を「眠い」に置く。
+  # 戻りは「瞬き直前の開き具合の半分まで戻るまで」で測る（上の実測は開眼基準の 9 割で測った値）。
+  # 9 割ではランドマークが元の値へ漸近する尾まで数え、起きている人でも数百 ms〜数秒に伸びる。
+  # 測り方を変えても 0.20/0.45 のままで誤警告は増えなかったので値は据え置き。収録で引き直すこと。
   blink_dynamics: { weight: 0.8, window_seconds: 60, closed_ratio: 0.6, open_ratio: 0.7, normal_seconds: 0.40, drowsy_seconds: 1.20, normal_reopen: 0.20, drowsy_reopen: 0.45, min_blinks: 3 }
   # うなずき（落ちて戻す往復）。head_down は持続を条件にするのでこの動きを拾えない。
-  nodding:     { weight: 0.8, window_seconds: 60, amplitude_deg: 8, max_seconds: 2.5, nods_drowsy: 3 }
+  # eyes_closed_ratio: 頭が落ちる間とその直前に、目がこれより閉じていた時間が合計 0.4 秒以上ある
+  # 往復だけを数える。相づちや話しながらの頷きは目が開いたまま起きる。
+  # half_life_seconds: 最後のうなずきから点が半分になるまで。10 秒では止めてから 10 秒近く警告が残った。
+  nodding:     { weight: 0.8, window_seconds: 60, amplitude_deg: 8, max_seconds: 2.5, nods_drowsy: 3, eyes_closed_ratio: 0.7, half_life_seconds: 5 }
   # 運転者を見失っている状態。他の cue は顔なしで黙るので、この1本だけが声を出せる。
-  face_absent: { weight: 1.0, absent_seconds: 3.0, grace_seconds: 0.5 }
+  # explain_*: 目を開けたままこの角度以上横／下を向いた直後に見失ったのは、脇見・手元の注視の続き
+  # として扱い、「顔が映っていません」を出さない（head_turn と attention_buffer が受け持つ）。
+  face_absent: { weight: 1.0, absent_seconds: 3.0, grace_seconds: 0.5, explain_yaw_deg: 15, explain_pitch_deg: 12 }
   yawn:        { weight: 0.5, open_threshold: 0.4, min_seconds: 1.5 }
-  head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5 }
-  head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5 }
+  # 目を開けたまま下を向くのは手元を見ているのであって眠気ではない（注意散漫の側が拾う）。
+  head_down:   { weight: 0.8, pitch_down_deg: 12, sustained_seconds: 1.5, eyes_closed_ratio: 0.7 }
+  # lost_hold_seconds: 横を向きすぎて顔を見失っても、この秒数までは横を向いたままとみなす。
+  head_turn:   { weight: 0.6, yaw_side_deg: 15, sustained_seconds: 1.5, lost_hold_seconds: 10 }
   # 視線に関わる3つのしきい値（off_threshold / center_radius / _zones.forward_gaze）は、
   # gaze_x が左右の動きに反応しなかった頃に置いた値なので、根拠が無い。当時は視線ズレが
   # 常に 0 で、どのしきい値を置いても結果は同じだった。録り直して較正すること。
@@ -286,10 +294,10 @@ feedback:
     distraction: 脇見
     inattentive: 注意散漫
     stress: 緊張
-  sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted）
+  sounds:                     # 評価軸ごとに鳴らす音（drowsy / distracted / inattentive）
     drowsiness: drowsy
     distraction: distracted
-    concentration: distracted # 注意が外れたときに鳴る（alert_on: low のため）
+    concentration: inattentive # 注意が外れたときに鳴る（alert_on: low のため）
 
 # 学習データの録画。--record で有効化すると各フレームの特徴量＋判定をCSVに残す。
 recorder:

@@ -25,7 +25,7 @@ def _pitches(poses: list[Pose], timestamps: list[float]) -> list[float]:
     extractor = FaceFeatureExtractor()
     out = []
     with patch("alertness.features.extractor.estimate_pose") as fake:
-        for pose, t in zip(poses, timestamps):
+        for pose, t in zip(poses, timestamps, strict=True):
             fake.return_value = pose
             out.append(extractor.extract(_landmarks(), t).get("pitch"))
     return out
