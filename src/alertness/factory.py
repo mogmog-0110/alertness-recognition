@@ -297,20 +297,30 @@ def _remote_sink(feedback: dict[str, Any], source: FrameSource | None):
 
     if not isinstance(source, RemoteSource):
         return None
-    from .feedback.cadence import AlertCadence
     from .feedback.remote import RemoteSink
 
-    return RemoteSink(
-        source.link,
-        features=tuple(feedback.get("remote_features", feedback.get("iphone_features", ()))),
-        names=feedback.get("remote_names", feedback.get("iphone_names", {})),
-        sounds=feedback.get("sounds", {}),
-        cadence=AlertCadence(
+    return RemoteSink(source.link, **remote_sink_options(feedback))
+
+
+def remote_sink_options(feedback: dict[str, Any]) -> dict[str, Any]:
+    """RemoteSink に渡す features/names/sounds/cadence。単体運転・複数台運転で共通。
+
+    iphone_* は「iphone を remote に改める」前の設定キー名（dc7f408）。browser.yaml が
+    まだそちらで書かれているので、両方から呼べるようここへまとめ、片方でだけ
+    フォールバックを忘れる（表示名が空のまま動き、内部名が画面に漏れる）ことを防ぐ。
+    """
+    from .feedback.cadence import AlertCadence
+
+    return {
+        "features": tuple(feedback.get("remote_features", feedback.get("iphone_features", ()))),
+        "names": feedback.get("remote_names", feedback.get("iphone_names", {})),
+        "sounds": feedback.get("sounds", {}),
+        "cadence": AlertCadence(
             feedback.get("alert_cooldown_seconds", 5.0),
             feedback.get("alert_min_interval_seconds", 1.5),
             feedback.get("alert_escalate_factor", 0.7),
         ),
-    )
+    }
 
 
 def build_calibrator(config: dict[str, Any]):

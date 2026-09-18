@@ -6,6 +6,7 @@ import numpy as np
 from _helpers import FakeHistory, make_observation
 
 from alertness.classifier.cues.attention_buffer import AttentionBufferCue
+from alertness.classifier.cues.blink import BlinkCue
 from alertness.classifier.cues.eye_closure import EyeClosureCue
 from alertness.classifier.cues.gaze_off import GazeOffCue
 from alertness.classifier.cues.hr_elevation import HrElevationCue
@@ -51,6 +52,67 @@ def test_gaze_off_active_when_sustained():
     obs = make_observation(frames[-1], FakeHistory(frames))
     cue = GazeOffCue(off_threshold=0.2, off_screen_seconds=2.0)
     assert cue.evaluate(obs).active
+
+
+def test_gaze_off_ignores_frames_with_closed_eyes():
+    # あくびで目を細める・閉じると虹彩点の追跡が乱れ、視線が外れたように見える。
+    # eyes_closed_ratio を与えれば、その間は「外れている」と数えない。
+    frames = [Features({"gaze_off": 0.4, "eye_open": 0.3}, i * 0.1) for i in range(50)]
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    cue = GazeOffCue(off_threshold=0.2, off_screen_seconds=2.0, eyes_closed_ratio=0.7)
+    assert not cue.evaluate(obs).active
+
+
+def test_gaze_off_still_fires_with_eyes_open():
+    frames = [Features({"gaze_off": 0.4, "eye_open": 1.0}, i * 0.1) for i in range(50)]
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    cue = GazeOffCue(off_threshold=0.2, off_screen_seconds=2.0, eyes_closed_ratio=0.7)
+    assert cue.evaluate(obs).active
+
+
+def test_gaze_off_eyes_closed_ratio_disabled_by_default():
+    # 0 なら目を見ない（既存の呼び出し側・記録との後方互換）。
+    frames = [Features({"gaze_off": 0.4, "eye_open": 0.0}, i * 0.1) for i in range(50)]
+    obs = make_observation(frames[-1], FakeHistory(frames))
+    cue = GazeOffCue(off_threshold=0.2, off_screen_seconds=2.0)
+    assert cue.evaluate(obs).active
+
+
+def _blinking_then(tail_mouth: float, tail_seconds: float = 3.0, step: float = 0.05):
+    """瞬きのある健全な信号（eye_signal_usable を通すため）の末尾に、
+    指定した口の開きで閉眼が続く区間を継ぎ足す。"""
+    frames, t = [], 0.0
+    for _ in range(int(70.0 / step)):
+        ear = 0.2 if (t % 4.0) < 0.15 else 1.0
+        frames.append(Features({"eye_open": ear, "jawOpen": 0.0, "yaw_rel": 0.0}, t))
+        t += step
+    for _ in range(int(tail_seconds / step)):
+        frames.append(Features({"eye_open": 0.2, "jawOpen": tail_mouth, "yaw_rel": 0.0}, t))
+        t += step
+    return frames
+
+
+def test_blink_ignores_closed_eyes_during_a_yawn():
+    # あくびでも目は 1 秒以上閉じるが、原因は yawn cue が別に拾う。ここで重ねて
+    # 「長く目を閉じた」（マイクロスリープの疑い）と出すのは誤解を招く。
+    obs = make_observation(*_split(_blinking_then(tail_mouth=0.8)))
+    result = BlinkCue(mouth_open_threshold=0.4).evaluate(obs)
+    assert not result.active
+
+
+def test_blink_still_fires_for_closed_eyes_with_a_closed_mouth():
+    obs = make_observation(*_split(_blinking_then(tail_mouth=0.0)))
+    result = BlinkCue(mouth_open_threshold=0.4).evaluate(obs)
+    assert result.active
+
+
+def test_blink_mouth_open_threshold_disabled_by_default():
+    obs = make_observation(*_split(_blinking_then(tail_mouth=0.8)))
+    assert BlinkCue().evaluate(obs).active
+
+
+def _split(frames):
+    return frames[-1], FakeHistory(frames)
 
 
 def _frames(gaze: float, yaw: float, n: int, t0: float = 0.0):

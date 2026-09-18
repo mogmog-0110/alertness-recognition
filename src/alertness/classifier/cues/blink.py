@@ -1,11 +1,17 @@
-"""長い閉眼の手がかり。連続して閉じ続ける＝マイクロスリープの疑い。"""
+"""長い閉眼の手がかり。連続して閉じ続ける＝マイクロスリープの疑い。
+
+あくびでも目は 1 秒以上閉じ続ける。原因はすでに yawn cue が「あくび」として拾うので、
+ここまで「長く目を閉じた」（マイクロスリープの疑い）として重ねて出すと、危険度の
+違う 2 つの警告が同じ状態に対して競合し、見る側はどちらを信じればよいか分からない。
+mouth_open_threshold を与えると、口が開いている間の閉眼は数えない。
+"""
 
 from __future__ import annotations
 
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
 from ._eye_health import eye_signal_usable
-from ._support import eye_key, trailing_true_seconds, window_values
+from ._support import eye_key, mouth_key, trailing_true_seconds, window_values
 
 
 class BlinkCue:
@@ -18,11 +24,13 @@ class BlinkCue:
         long_blink_seconds: float = 1.0,
         max_yaw: float = 25.0,
         health_window: float = 60.0,
+        mouth_open_threshold: float = 0.0,
     ) -> None:
         self.closed_ratio = closed_ratio
         self.long_blink_seconds = long_blink_seconds  # これ以上閉じ続けたら危険
         self.max_yaw = max_yaw  # 横向きはEARが信用できないので判定しない
         self.health_window = health_window  # この長さに瞬きが1回も無ければ目の信号を信じない
+        self.mouth_open_threshold = mouth_open_threshold  # 0 なら口を見ない
 
     def evaluate(self, obs: Observation) -> CueResult:
         if not obs.features.face_present:
@@ -39,6 +47,12 @@ class BlinkCue:
         window = max(2.0, self.long_blink_seconds * 3)
         times, ears = window_values(obs, eye_key(obs), window, 1.0)
         flags = [e < self.closed_ratio for e in ears]
+        if self.mouth_open_threshold > 0:
+            _, mouths = window_values(obs, mouth_key(obs), window, 0.0)
+            flags = [
+                flag and mouth < self.mouth_open_threshold
+                for flag, mouth in zip(flags, mouths, strict=True)
+            ]
         duration = trailing_true_seconds(times, flags)
         score = clamp(duration / self.long_blink_seconds) if self.long_blink_seconds > 0 else 0.0
         active = duration >= self.long_blink_seconds

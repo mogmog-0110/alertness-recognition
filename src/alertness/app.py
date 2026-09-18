@@ -397,6 +397,10 @@ def main(argv: list[str] | None = None) -> int:
 
 def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
     log.set_verbose(args.verbose)
+    if _wants_multi_device(config, args):
+        from .multi_device import run as run_multi_device
+
+        return run_multi_device(config)
     App(
         config,
         record=args.record,
@@ -409,3 +413,18 @@ def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
         scenario=args.scenario,
     ).run()
     return 0
+
+
+def _wants_multi_device(config: dict[str, Any], args: argparse.Namespace) -> bool:
+    """複数台対応が意味を持つ構成か。
+
+    ガイド収録・シナリオ再生・動画ファイルの読み込みは、いずれも 1 人を相手にする
+    手順（指示に従う／台本を流す／既存の映像を読む）なので、台数を増やす対象ではない。
+    """
+    if args.guided or args.scenario or args.video:
+        return False
+    source = config.get("source", {})
+    if source.get("type", "webcam") not in ("remote", "iphone"):
+        return False
+    net = source.get("remote", source.get("iphone", {}))
+    return int(net.get("max_peers", 1)) > 1
