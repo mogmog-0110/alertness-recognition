@@ -106,7 +106,9 @@ cues:
   # 値は実データの分布に合わせて調整（closed_ratio は awake/drowsy の中間、
   # gaze は実測が 0.0〜0.06 程度だったので 0.05、頭部閾値も実測に寄せた）。
   eye_closure: { weight: 1.0, window_seconds: 30, perclos_drowsy: 0.4, closed_ratio: 0.6, max_yaw: 25 }
-  blink:       { weight: 0.7, closed_ratio: 0.6, long_blink_seconds: 1.0, max_yaw: 25 }
+  # mouth_open_threshold: あくびでも目は 1 秒以上閉じる。yawn cue が別に拾うので、
+  # 口が開いている間の閉眼は「長く目を閉じた」（マイクロスリープの疑い）に数えない。
+  blink:       { weight: 0.7, closed_ratio: 0.6, long_blink_seconds: 1.0, max_yaw: 25, mouth_open_threshold: 0.4 }
   # 瞬きの遅さ。PERCLOS（遅い）とマイクロスリープ（手遅れ）の間を埋める早期兆候。
   # 覚醒時の閉眼は 0.1〜0.15 秒、眠気が進むと 0.3 秒以上に伸び、まぶたの戻りも遅くなる。
   # normal/drowsy の各値は文献の代表値を初期値に置いたもので、収録データで詰めること。
@@ -138,7 +140,9 @@ cues:
   # 視線に関わる3つのしきい値（off_threshold / center_radius / _zones.forward_gaze）は、
   # gaze_x が左右の動きに反応しなかった頃に置いた値なので、根拠が無い。当時は視線ズレが
   # 常に 0 で、どのしきい値を置いても結果は同じだった。録り直して較正すること。
-  gaze_off:    { weight: 0.6, off_threshold: 0.035, off_screen_seconds: 2.0 }
+  # eyes_closed_ratio: あくび等で目を閉じている間は虹彩の追跡が乱れて視線が外れて
+  # 見えるので、目が基準の7割未満まで閉じているフレームは「外れている」と数えない。
+  gaze_off:    { weight: 0.6, off_threshold: 0.035, off_screen_seconds: 2.0, eyes_closed_ratio: 0.7 }
   # 集中(走査): 視線が中心域に留まった割合(PRC)と水平視線のばらつき。留まりすぎ＝走査不足で
   # 下がる。視線を1点に固定するのは集中ではなく、認知負荷による視野狭窄の兆候。
   # prc_healthy は文献の 92% をそのまま使えない（アイトラッカー前提で尺度が違う）ため、

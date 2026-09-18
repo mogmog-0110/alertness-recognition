@@ -27,6 +27,11 @@ def eye_key(obs: Observation) -> str:
     return "eye_open" if "eye_open" in obs.features.values else "ear_norm"
 
 
+def mouth_key(obs: Observation) -> str:
+    """口の cue が読む開き具合の列名。blendshape の jawOpen を優先し、無ければ MAR。"""
+    return "jawOpen" if "jawOpen" in obs.features.values else "mar"
+
+
 def window_values(
     obs: Observation, key: str, seconds: float, default: float
 ) -> tuple[list[float], list[float]]:

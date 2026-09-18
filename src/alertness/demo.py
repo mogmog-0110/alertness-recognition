@@ -55,16 +55,19 @@ def main(argv: list[str] | None = None) -> int:
     # 証明書に入っていないアドレスは案内しない。開けても証明書の不一致で繋がらない。
     covered = certificate_hosts(net.get("certfile", "certs/cert.pem"))
     others = [a for a in lan_addresses() if a != address and a in covered]
-    print(_banner(address, port, renewed, others))
+    max_peers = int(net.get("max_peers", 1))
+    print(_banner(address, port, renewed, others, max_peers))
     return run(args, _without_link_notice(config))
 
 
-def _banner(address: str, port: int, renewed: bool, others: list[str]) -> str:
+def _banner(address: str, port: int, renewed: bool, others: list[str], max_peers: int = 1) -> str:
     lines = [
         _RULE,
-        "  端末のブラウザで次を開いてください",
-        f"      https://{address}:{port}/",
+        "  PC 画面の QR を端末のカメラで読み取ってください",
     ]
+    if max_peers > 1:
+        lines.append(f"  （同じ QR で最大 {max_peers} 台まで同時に使えます）")
+    lines.append(f"  （QR が出ないときは次を開く） https://{address}:{port}/")
     if others:
         lines.append("  開けないときは: " + "  ".join(f"https://{a}:{port}/" for a in others))
     if renewed:

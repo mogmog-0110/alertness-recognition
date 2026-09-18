@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from ...contracts import CueResult, Observation
 from ...geometry import clamp
-from ._support import trailing_true_seconds, window_values
+from ._support import mouth_key, trailing_true_seconds, window_values
 
 
 class YawnCue:
@@ -22,7 +22,7 @@ class YawnCue:
         if not obs.features.face_present:
             return CueResult(self.name, self.dimension, 0.0, False, "顔なし")
 
-        key = "jawOpen" if "jawOpen" in obs.features.values else "mar"
+        key = mouth_key(obs)
         window = max(2.0, self.min_seconds * 2)
         times, values = window_values(obs, key, window, 0.0)
         flags = [v >= self.open_threshold for v in values]
